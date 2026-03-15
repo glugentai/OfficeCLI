@@ -1,0 +1,26 @@
+## .NET
+bin/
+obj/
+out/
+
+## IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Build
+*.nupkg
+*.snupkg
+out/
+
+## Test samples
+test-samples/
+
+## Claude
+.claude/
