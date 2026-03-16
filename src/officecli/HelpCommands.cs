@@ -663,6 +663,24 @@ Shape properties (/slide[N]/shape[M]) -- applies to all runs:
   width      Shape width (EMU or cm/in/pt/px, e.g. 10cm)
   height     Shape height (EMU or cm/in/pt/px, e.g. 2cm)
 
+Slide properties (/slide[N]):
+  background   Solid color (RRGGBB), gradient (C1-C2 or C1-C2-angle or C1-C2-C3),
+               image fill (image:/path/to/file.png), or "none" to remove
+               Examples: FF0000  |  FF0000-0000FF  |  FF0000-0000FF-45  |  image:/tmp/bg.png
+  transition   Slide transition: fade, push, wipe, split, reveal, random, cover, uncover, zoom, none
+               Suffix with speed: fade-fast, push-slow (slow=1200ms, fast=300ms, default=700ms)
+  advanceTime  Auto-advance after time: "3000" (ms) to advance 3 s after last animation
+  advanceClick true/false — advance on click (default true)
+
+Shape animation (/slide[N]/shape[M]):
+  animation    EFFECT[-CLASS[-DURATION[-TRIGGER]]]
+               EFFECT:  appear, fade, fly, zoom, wipe, bounce, float, split, wheel,
+                        spin, grow, swivel, checkerboard, blinds, bars, dissolve, flash, none
+               CLASS:   entrance/in (default), exit/out, emphasis/emph
+               DURATION: milliseconds (default 500)
+               TRIGGER: click (default), after/afterprevious, with/withprevious
+               Examples: "fade"  |  "fly-entrance"  |  "zoom-exit-800"  |  "fade-in-500-after"
+
 Table properties (/slide[N]/table[M]):
   x, y, width, height, name
 
@@ -698,6 +716,10 @@ Examples:
   officecli set pres.pptx '/slide[1]/table[1]/tr[1]/tc[1]' --prop text="Header" --prop bold=true --prop fill=4472C4
   officecli set pres.pptx '/slide[1]/placeholder[title]' --prop text="My Title"
   officecli set pres.pptx '/slide[1]/shape[2]/paragraph[1]' --prop align=center
+  officecli set pres.pptx '/slide[1]' --prop background=1F3864
+  officecli set pres.pptx '/slide[1]' --prop background=FF0000-0000FF-45
+  officecli set pres.pptx '/slide[1]' --prop transition=fade --prop advanceTime=3000
+  officecli set pres.pptx '/slide[1]/shape[1]' --prop animation=fly-entrance-500
 """;
 
     const string PptxAdd = """
@@ -707,7 +729,8 @@ PowerPoint (.pptx) — add
 Types and properties:
 
   slide  -- parent: /
-    title (optional), text (optional)
+    title (optional), text (optional),
+    background (optional) — RRGGBB, gradient (C1-C2[-angle]), or image:/path/to/file.png
 
   shape (textbox)  -- parent: /slide[N]
     text (supports \n for line breaks), name, font, size, bold, italic,
@@ -738,6 +761,7 @@ Types and properties:
 
 Examples:
   officecli add pres.pptx / --type slide --prop title="Agenda" --prop text="Topics for today"
+  officecli add pres.pptx / --type slide --prop title="Dark Slide" --prop background=1F3864
   officecli add pres.pptx '/slide[1]' --type shape --prop text="Hello" --prop font=Arial --prop size=18
   officecli add pres.pptx '/slide[1]' --type shape --prop text="Go" --prop preset=rightArrow --prop fill=4472C4
   officecli add pres.pptx '/slide[1]' --type table --prop rows=3 --prop cols=4
