@@ -688,7 +688,11 @@ public partial class PowerPointHandler
                 "zoom"                            => (21, "zoom"),
                 "bounce"                          => (21, "zoom"),
                 "swipe" or "sweep"                => (2,  "fly"),
-                _                                 => (10, "fade")  // default: fade
+                _ => throw new ArgumentException(
+                    $"Unknown animation effect: '{effect}'. " +
+                    "Supported entrance/exit effects: appear, fade, fly, zoom, wipe, bounce, float, split, " +
+                    "wheel, swivel, checkerboard, blinds, dissolve, flash, box, circle, diamond, plus, strips, wedge, random. " +
+                    "Use 'none' to remove.")
             };
         }
         // Emphasis
@@ -698,7 +702,8 @@ public partial class PowerPointHandler
             "grow" or "shrink"      => (26, null),
             "bold" or "boldflash"   => (1,  null),
             "wave"                  => (14, null),
-            _                       => (10, null)
+            _ => throw new ArgumentException(
+                $"Unknown emphasis effect: '{effect}'. Supported: spin, grow, bold, wave.")
         };
     }
 

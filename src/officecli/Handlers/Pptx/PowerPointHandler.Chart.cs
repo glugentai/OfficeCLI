@@ -214,10 +214,9 @@ public partial class PowerPointHandler
                 break;
             }
             default:
-                // Default to column chart
-                chartElement = BuildBarChart(C.BarDirectionValues.Column, false, false,
-                    categories, seriesData, catAxisId, valAxisId, colors);
-                break;
+                throw new ArgumentException(
+                    $"Unknown chart type: '{kind}'. Supported: column, bar, line, pie, doughnut, area, scatter, combo. " +
+                    "Add 'stacked' or 'percentstacked' suffix for variants (e.g. columnstacked).");
         }
 
         if (chartElement != null)

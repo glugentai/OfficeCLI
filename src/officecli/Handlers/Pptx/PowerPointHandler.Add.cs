@@ -444,8 +444,10 @@ public partial class PowerPointHandler
                     ?? throw new InvalidOperationException("Slide has no shape tree");
 
                 // Parse chart data
-                var chartType = properties.GetValueOrDefault("charttype",
-                    properties.GetValueOrDefault("type", "column"));
+                var chartType = properties.FirstOrDefault(kv =>
+                    kv.Key.Equals("charttype", StringComparison.OrdinalIgnoreCase)
+                    || kv.Key.Equals("type", StringComparison.OrdinalIgnoreCase)).Value
+                    ?? "column";
                 var chartTitle = properties.GetValueOrDefault("title");
                 var categories = ParseCategories(properties);
                 var seriesData = ParseSeriesData(properties);
