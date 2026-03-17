@@ -54,6 +54,22 @@ public partial class ExcelHandler
                 Preview = sheetNameFromPath,
                 ChildCount = data.Elements<Row>().Count()
             };
+
+            // Include freeze pane info
+            var ws = GetSheet(worksheet);
+            var pane = ws.GetFirstChild<SheetViews>()?.GetFirstChild<SheetView>()?.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Pane>();
+            if (pane != null && pane.State?.Value == PaneStateValues.Frozen)
+            {
+                sheetNode.Format["freeze"] = pane.TopLeftCell?.Value ?? "";
+            }
+
+            // Include autofilter info
+            var autoFilter = ws.GetFirstChild<AutoFilter>();
+            if (autoFilter?.Reference?.Value != null)
+            {
+                sheetNode.Format["autofilter"] = autoFilter.Reference.Value;
+            }
+
             if (depth > 0)
             {
                 sheetNode.Children = GetSheetChildNodes(sheetNameFromPath, data, depth);
@@ -61,9 +77,163 @@ public partial class ExcelHandler
             return sheetNode;
         }
 
-        // Cell reference: A1 or range A1:D10
         var cellRef = segments[1];
 
+        // Column path: /Sheet1/col[A]
+        var colMatch = Regex.Match(cellRef, @"^col\[([A-Z]+)\]$", RegexOptions.IgnoreCase);
+        if (colMatch.Success)
+        {
+            var colName = colMatch.Groups[1].Value.ToUpperInvariant();
+            var colIdx = (uint)ColumnNameToIndex(colName);
+            var colNode = new DocumentNode { Path = path, Type = "column", Preview = colName };
+            var columns = GetSheet(worksheet).GetFirstChild<Columns>();
+            if (columns != null)
+            {
+                var col = columns.Elements<Column>().FirstOrDefault(c =>
+                    c.Min?.Value <= colIdx && c.Max?.Value >= colIdx);
+                if (col != null)
+                {
+                    if (col.Width?.Value != null) colNode.Format["width"] = col.Width.Value;
+                    if (col.Hidden?.Value == true) colNode.Format["hidden"] = true;
+                    if (col.CustomWidth?.Value == true) colNode.Format["customWidth"] = true;
+                }
+            }
+            return colNode;
+        }
+
+        // Row path: /Sheet1/row[N]
+        var rowMatch = Regex.Match(cellRef, @"^row\[(\d+)\]$");
+        if (rowMatch.Success)
+        {
+            var rowIdx = uint.Parse(rowMatch.Groups[1].Value);
+            var row = data.Elements<Row>().FirstOrDefault(r => r.RowIndex?.Value == rowIdx);
+            if (row == null)
+                return new DocumentNode { Path = path, Type = "row", Preview = $"row {rowIdx}", Text = "(empty)" };
+            var rowNode = new DocumentNode
+            {
+                Path = path, Type = "row", ChildCount = row.Elements<Cell>().Count()
+            };
+            if (row.Height?.Value != null) rowNode.Format["height"] = row.Height.Value;
+            if (row.Hidden?.Value == true) rowNode.Format["hidden"] = true;
+            if (depth > 0)
+                foreach (var c in row.Elements<Cell>())
+                    rowNode.Children.Add(CellToNode(sheetNameFromPath, c, worksheet));
+            return rowNode;
+        }
+
+        // Conditional formatting path: /Sheet1/cf[N]
+        var cfMatch = Regex.Match(cellRef, @"^cf\[(\d+)\]$");
+        if (cfMatch.Success)
+        {
+            var cfIdx = int.Parse(cfMatch.Groups[1].Value);
+            var cfElements = GetSheet(worksheet).Elements<ConditionalFormatting>().ToList();
+            if (cfIdx < 1 || cfIdx > cfElements.Count)
+                return new DocumentNode { Path = path, Type = "error", Text = $"CF {cfIdx} not found (total: {cfElements.Count})" };
+
+            var cf = cfElements[cfIdx - 1];
+            var cfNode = new DocumentNode { Path = path, Type = "conditionalFormatting" };
+            cfNode.Format["sqref"] = cf.SequenceOfReferences?.InnerText ?? "";
+
+            var rule = cf.Elements<ConditionalFormattingRule>().FirstOrDefault();
+            if (rule != null)
+            {
+                if (rule.Type?.Value != null)
+                    cfNode.Format["ruleType"] = rule.Type.InnerText;
+
+                // DataBar
+                var dataBar = rule.GetFirstChild<DataBar>();
+                if (dataBar != null)
+                {
+                    cfNode.Format["cfType"] = "dataBar";
+                    var dbColor = dataBar.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Color>();
+                    if (dbColor?.Rgb?.Value != null) cfNode.Format["color"] = dbColor.Rgb.Value;
+                }
+
+                // ColorScale
+                var colorScale = rule.GetFirstChild<ColorScale>();
+                if (colorScale != null)
+                {
+                    cfNode.Format["cfType"] = "colorScale";
+                    var colors = colorScale.Elements<DocumentFormat.OpenXml.Spreadsheet.Color>().ToList();
+                    if (colors.Count >= 2)
+                    {
+                        cfNode.Format["mincolor"] = colors[0].Rgb?.Value ?? "";
+                        cfNode.Format["maxcolor"] = colors[^1].Rgb?.Value ?? "";
+                        if (colors.Count >= 3)
+                            cfNode.Format["midcolor"] = colors[1].Rgb?.Value ?? "";
+                    }
+                }
+
+                // IconSet
+                var iconSet = rule.GetFirstChild<IconSet>();
+                if (iconSet != null)
+                {
+                    cfNode.Format["cfType"] = "iconSet";
+                    if (iconSet.IconSetValue?.Value != null)
+                        cfNode.Format["iconset"] = iconSet.IconSetValue.InnerText;
+                    if (iconSet.ShowValue?.Value != null)
+                        cfNode.Format["showvalue"] = iconSet.ShowValue.Value;
+                    if (iconSet.Reverse?.Value == true)
+                        cfNode.Format["reverse"] = true;
+                }
+
+                // Formula-based
+                var formula = rule.GetFirstChild<Formula>();
+                if (formula != null && rule.Type?.Value == ConditionalFormatValues.Expression)
+                {
+                    cfNode.Format["cfType"] = "formula";
+                    cfNode.Format["formula"] = formula.Text ?? "";
+                    if (rule.FormatId?.Value != null)
+                        cfNode.Format["dxfId"] = rule.FormatId.Value;
+                }
+            }
+            return cfNode;
+        }
+
+        // AutoFilter path: /Sheet1/autofilter
+        if (cellRef.Equals("autofilter", StringComparison.OrdinalIgnoreCase))
+        {
+            var af = GetSheet(worksheet).GetFirstChild<AutoFilter>();
+            var afNode = new DocumentNode { Path = path, Type = "autofilter" };
+            if (af?.Reference?.Value != null) afNode.Format["range"] = af.Reference.Value;
+            return afNode;
+        }
+
+        // Chart path: /Sheet1/chart[N]
+        var chartMatch = Regex.Match(cellRef, @"^chart\[(\d+)\]$");
+        if (chartMatch.Success)
+        {
+            var chartIdx = int.Parse(chartMatch.Groups[1].Value);
+            var drawingsPart = worksheet.DrawingsPart;
+            if (drawingsPart == null)
+                return new DocumentNode { Path = path, Type = "error", Text = "No charts in this sheet" };
+
+            var chartParts = drawingsPart.ChartParts.ToList();
+            if (chartIdx < 1 || chartIdx > chartParts.Count)
+                return new DocumentNode { Path = path, Type = "error", Text = $"Chart {chartIdx} not found" };
+
+            var chartPart = chartParts[chartIdx - 1];
+            var chart = chartPart.ChartSpace?.GetFirstChild<DocumentFormat.OpenXml.Drawing.Charts.Chart>();
+            var chartNode = new DocumentNode { Path = path, Type = "chart" };
+            if (chart != null)
+            {
+                var title = chart.Title?.Descendants<DocumentFormat.OpenXml.Drawing.Run>()
+                    .FirstOrDefault()?.Text?.Text;
+                if (title != null) chartNode.Format["title"] = title;
+                var plotArea = chart.PlotArea;
+                if (plotArea != null)
+                {
+                    var chartType = plotArea.ChildElements
+                        .FirstOrDefault(e => e.LocalName.EndsWith("Chart"))?.LocalName ?? "unknown";
+                    chartNode.Format["chartType"] = chartType;
+                }
+                var legend = chart.Legend;
+                if (legend != null) chartNode.Format["legend"] = true;
+            }
+            return chartNode;
+        }
+
+        // Cell reference: A1 or range A1:D10
         // Check if it's a cell reference or a generic XML path
         var firstPart = cellRef.Split('/')[0].Split('[')[0];
         bool isCellRef = System.Text.RegularExpressions.Regex.IsMatch(firstPart, @"^[A-Z]+\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);

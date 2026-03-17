@@ -1,9 +1,12 @@
 // Copyright 2025 OfficeCli (officecli.ai)
 // SPDX-License-Identifier: Apache-2.0
 
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeCli.Core;
+using C = DocumentFormat.OpenXml.Drawing.Charts;
+using Drawing = DocumentFormat.OpenXml.Drawing;
 
 namespace OfficeCli.Handlers;
 
@@ -84,6 +87,10 @@ public partial class ExcelHandler
                 Type = "row",
                 ChildCount = row.Elements<Cell>().Count()
             };
+            if (row.Height?.Value != null)
+                rowNode.Format["height"] = row.Height.Value;
+            if (row.Hidden?.Value == true)
+                rowNode.Format["hidden"] = true;
 
             if (depth > 0)
             {
@@ -131,9 +138,68 @@ public partial class ExcelHandler
                 }
                 catch { }
             }
+
+            // Border readback from stylesheet
+            var styleIndex = cell.StyleIndex?.Value ?? 0;
+            var wbStylesPart = _doc.WorkbookPart?.WorkbookStylesPart;
+            if (wbStylesPart?.Stylesheet != null && styleIndex > 0)
+            {
+                var cellFormats = wbStylesPart.Stylesheet.CellFormats;
+                if (cellFormats != null && styleIndex < (uint)cellFormats.Elements<CellFormat>().Count())
+                {
+                    var xf = cellFormats.Elements<CellFormat>().ElementAt((int)styleIndex);
+                    var borderId = xf.BorderId?.Value ?? 0;
+                    if (borderId > 0)
+                    {
+                        var borders = wbStylesPart.Stylesheet.Borders;
+                        if (borders != null && borderId < (uint)borders.Elements<Border>().Count())
+                        {
+                            var border = borders.Elements<Border>().ElementAt((int)borderId);
+                            var sides = new (string name, BorderPropertiesType? bp)[] {
+                                ("left", border.LeftBorder), ("right", border.RightBorder),
+                                ("top", border.TopBorder), ("bottom", border.BottomBorder)
+                            };
+                            foreach (var (side, b) in sides)
+                            {
+                                if (b?.Style?.Value != null && b.Style.Value != BorderStyleValues.None)
+                                {
+                                    node.Format[$"border.{side}"] = b.Style.InnerText;
+                                    if (b.Color?.Rgb?.Value != null)
+                                        node.Format[$"border.{side}.color"] = b.Color.Rgb.Value;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Merge cell readback
+            var mergeCells = GetSheet(part).GetFirstChild<MergeCells>();
+            if (mergeCells != null)
+            {
+                var mergeCell = mergeCells.Elements<MergeCell>()
+                    .FirstOrDefault(m => IsCellInMergeRange(cellRef, m.Reference?.Value));
+                if (mergeCell != null)
+                {
+                    node.Format["merge"] = mergeCell.Reference?.Value ?? "";
+                }
+            }
         }
 
         return node;
+    }
+
+    private static bool IsCellInMergeRange(string cellRef, string? rangeRef)
+    {
+        if (string.IsNullOrEmpty(rangeRef) || !rangeRef.Contains(':')) return false;
+        var parts = rangeRef.Split(':');
+        var (startCol, startRow) = ParseCellReference(parts[0]);
+        var (endCol, endRow) = ParseCellReference(parts[1]);
+        var (cellCol, cellRow) = ParseCellReference(cellRef);
+
+        var cellColIdx = ColumnNameToIndex(cellCol);
+        return cellRow >= startRow && cellRow <= endRow
+            && cellColIdx >= ColumnNameToIndex(startCol) && cellColIdx <= ColumnNameToIndex(endCol);
     }
 
     private DocumentNode GetCellRange(string sheetName, SheetData sheetData, string range, int depth)
@@ -220,5 +286,552 @@ public partial class ExcelHandler
         }
 
         return cell;
+    }
+
+    // ==================== Conditional Formatting Helpers ====================
+
+    private static bool IsTruthy(string value) =>
+        value.ToLowerInvariant() is "true" or "1" or "yes";
+
+    private static IconSetValues ParseIconSetValues(string name)
+    {
+        return name.ToLowerInvariant() switch
+        {
+            "3arrows" => IconSetValues.ThreeArrows,
+            "3arrowsgray" => IconSetValues.ThreeArrowsGray,
+            "3flags" => IconSetValues.ThreeFlags,
+            "3trafficlights1" => IconSetValues.ThreeTrafficLights1,
+            "3trafficlights2" => IconSetValues.ThreeTrafficLights2,
+            "3signs" => IconSetValues.ThreeSigns,
+            "3symbols" => IconSetValues.ThreeSymbols,
+            "3symbols2" => IconSetValues.ThreeSymbols2,
+            "4arrows" => IconSetValues.FourArrows,
+            "4arrowsgray" => IconSetValues.FourArrowsGray,
+            "4rating" => IconSetValues.FourRating,
+            "4redtoblack" => IconSetValues.FourRedToBlack,
+            "4trafficlights" => IconSetValues.FourTrafficLights,
+            "5arrows" => IconSetValues.FiveArrows,
+            "5arrowsgray" => IconSetValues.FiveArrowsGray,
+            "5rating" => IconSetValues.FiveRating,
+            "5quarters" => IconSetValues.FiveQuarters,
+            _ => IconSetValues.ThreeTrafficLights1
+        };
+    }
+
+    private static int GetIconCount(string name)
+    {
+        var lower = name.ToLowerInvariant();
+        if (lower.StartsWith("5")) return 5;
+        if (lower.StartsWith("4")) return 4;
+        return 3;
+    }
+
+    // ==================== Chart Helpers ====================
+
+    private static readonly string[] ExcelDefaultSeriesColors =
+    {
+        "4472C4", "ED7D31", "A5A5A5", "FFC000", "5B9BD5", "70AD47",
+        "264478", "9B4A22", "636363", "BF8F00", "3A75A8", "4E8538"
+    };
+
+    private static (string kind, bool is3D, bool stacked, bool percentStacked) ExcelChartParseChartType(string chartType)
+    {
+        var ct = chartType.ToLowerInvariant().Replace(" ", "").Replace("_", "").Replace("-", "");
+        var is3D = ct.EndsWith("3d") || ct.Contains("3d");
+        ct = ct.Replace("3d", "");
+
+        var stacked = ct.Contains("stacked") && !ct.Contains("percent");
+        var percentStacked = ct.Contains("percentstacked") || ct.Contains("pstacked");
+        ct = ct.Replace("percentstacked", "").Replace("pstacked", "").Replace("stacked", "");
+
+        var kind = ct switch
+        {
+            "bar" => "bar",
+            "column" or "col" => "column",
+            "line" => "line",
+            "pie" => "pie",
+            "doughnut" or "donut" => "doughnut",
+            "area" => "area",
+            "scatter" or "xy" => "scatter",
+            _ => ct
+        };
+
+        return (kind, is3D, stacked, percentStacked);
+    }
+
+    private static List<(string name, double[] values)> ExcelChartParseSeriesData(Dictionary<string, string> properties)
+    {
+        var result = new List<(string name, double[] values)>();
+
+        if (properties.TryGetValue("data", out var dataStr))
+        {
+            foreach (var seriesPart in dataStr.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var colonIdx = seriesPart.IndexOf(':');
+                if (colonIdx < 0) continue;
+                var sName = seriesPart[..colonIdx].Trim();
+                var vals = seriesPart[(colonIdx + 1)..].Split(',')
+                    .Select(v => double.Parse(v.Trim())).ToArray();
+                result.Add((sName, vals));
+            }
+            return result;
+        }
+
+        for (int i = 1; i <= 20; i++)
+        {
+            if (!properties.TryGetValue($"series{i}", out var seriesStr)) break;
+            var colonIdx = seriesStr.IndexOf(':');
+            if (colonIdx < 0)
+            {
+                var vals = seriesStr.Split(',').Select(v => double.Parse(v.Trim())).ToArray();
+                result.Add(($"Series {i}", vals));
+            }
+            else
+            {
+                var sName = seriesStr[..colonIdx].Trim();
+                var vals = seriesStr[(colonIdx + 1)..].Split(',')
+                    .Select(v => double.Parse(v.Trim())).ToArray();
+                result.Add((sName, vals));
+            }
+        }
+
+        return result;
+    }
+
+    private static string[]? ExcelChartParseCategories(Dictionary<string, string> properties)
+    {
+        if (!properties.TryGetValue("categories", out var catStr)) return null;
+        return catStr.Split(',').Select(c => c.Trim()).ToArray();
+    }
+
+    private static C.ChartSpace ExcelChartBuildChartSpace(
+        string chartType,
+        string? title,
+        string[]? categories,
+        List<(string name, double[] values)> seriesData,
+        Dictionary<string, string> properties)
+    {
+        var (kind, is3D, stacked, percentStacked) = ExcelChartParseChartType(chartType);
+
+        var chartSpace = new C.ChartSpace();
+        var chart = new C.Chart();
+
+        if (!string.IsNullOrEmpty(title))
+            chart.AppendChild(ExcelChartBuildTitle(title));
+
+        // Auto-generate categories if not provided
+        if (categories == null && seriesData.Count > 0)
+        {
+            var maxLen = seriesData.Max(s => s.values.Length);
+            categories = Enumerable.Range(1, maxLen).Select(i => i.ToString()).ToArray();
+        }
+
+        var plotArea = new C.PlotArea(new C.Layout());
+        uint catAxisId = 1;
+        uint valAxisId = 2;
+
+        OpenXmlCompositeElement? chartElement;
+        bool needsAxes = true;
+
+        switch (kind)
+        {
+            case "bar":
+                chartElement = ExcelChartBuildBarChart(C.BarDirectionValues.Bar, stacked, percentStacked,
+                    categories, seriesData, catAxisId, valAxisId);
+                break;
+            case "column":
+                chartElement = ExcelChartBuildBarChart(C.BarDirectionValues.Column, stacked, percentStacked,
+                    categories, seriesData, catAxisId, valAxisId);
+                break;
+            case "line":
+                chartElement = ExcelChartBuildLineChart(stacked, percentStacked,
+                    categories, seriesData, catAxisId, valAxisId);
+                break;
+            case "area":
+                chartElement = ExcelChartBuildAreaChart(stacked, percentStacked,
+                    categories, seriesData, catAxisId, valAxisId);
+                break;
+            case "pie":
+                chartElement = ExcelChartBuildPieChart(categories, seriesData);
+                needsAxes = false;
+                break;
+            case "doughnut":
+                chartElement = ExcelChartBuildDoughnutChart(categories, seriesData);
+                needsAxes = false;
+                break;
+            case "scatter":
+                chartElement = ExcelChartBuildScatterChart(categories, seriesData, catAxisId, valAxisId);
+                break;
+            default:
+                throw new ArgumentException(
+                    $"Unknown chart type: '{kind}'. Supported: column, bar, line, pie, doughnut, area, scatter.");
+        }
+
+        if (chartElement != null)
+            plotArea.AppendChild(chartElement);
+
+        if (needsAxes)
+        {
+            if (kind == "scatter")
+            {
+                plotArea.AppendChild(ExcelChartBuildValueAxis(catAxisId, valAxisId, C.AxisPositionValues.Bottom));
+                plotArea.AppendChild(ExcelChartBuildValueAxis(valAxisId, catAxisId, C.AxisPositionValues.Left));
+            }
+            else
+            {
+                plotArea.AppendChild(ExcelChartBuildCategoryAxis(catAxisId, valAxisId));
+                plotArea.AppendChild(ExcelChartBuildValueAxis(valAxisId, catAxisId, C.AxisPositionValues.Left));
+            }
+        }
+
+        chart.AppendChild(plotArea);
+
+        // Legend
+        var showLegend = properties.GetValueOrDefault("legend", "true");
+        if (!showLegend.Equals("false", StringComparison.OrdinalIgnoreCase) &&
+            !showLegend.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            var legendPos = showLegend.ToLowerInvariant() switch
+            {
+                "top" or "t" => C.LegendPositionValues.Top,
+                "left" or "l" => C.LegendPositionValues.Left,
+                "right" or "r" => C.LegendPositionValues.Right,
+                "bottom" or "b" => C.LegendPositionValues.Bottom,
+                _ => C.LegendPositionValues.Bottom
+            };
+            chart.AppendChild(new C.Legend(
+                new C.LegendPosition { Val = legendPos },
+                new C.Overlay { Val = false }
+            ));
+        }
+
+        chart.AppendChild(new C.PlotVisibleOnly { Val = true });
+        chart.AppendChild(new C.DisplayBlanksAs { Val = C.DisplayBlanksAsValues.Gap });
+
+        chartSpace.AppendChild(chart);
+        return chartSpace;
+    }
+
+    // ==================== Chart Type Builders ====================
+
+    private static C.BarChart ExcelChartBuildBarChart(
+        C.BarDirectionValues direction, bool stacked, bool percentStacked,
+        string[]? categories, List<(string name, double[] values)> seriesData,
+        uint catAxisId, uint valAxisId)
+    {
+        var grouping = percentStacked ? C.BarGroupingValues.PercentStacked
+            : stacked ? C.BarGroupingValues.Stacked
+            : C.BarGroupingValues.Clustered;
+
+        var barChart = new C.BarChart(
+            new C.BarDirection { Val = direction },
+            new C.BarGrouping { Val = grouping },
+            new C.VaryColors { Val = false }
+        );
+
+        for (int i = 0; i < seriesData.Count; i++)
+        {
+            var color = ExcelDefaultSeriesColors[i % ExcelDefaultSeriesColors.Length];
+            barChart.AppendChild(ExcelChartBuildBarSeries((uint)i, seriesData[i].name,
+                categories, seriesData[i].values, color));
+        }
+
+        barChart.AppendChild(new C.GapWidth { Val = (ushort)150 });
+        if (stacked || percentStacked)
+            barChart.AppendChild(new C.Overlap { Val = 100 });
+        barChart.AppendChild(new C.AxisId { Val = catAxisId });
+        barChart.AppendChild(new C.AxisId { Val = valAxisId });
+        return barChart;
+    }
+
+    private static C.LineChart ExcelChartBuildLineChart(
+        bool stacked, bool percentStacked,
+        string[]? categories, List<(string name, double[] values)> seriesData,
+        uint catAxisId, uint valAxisId)
+    {
+        var grouping = percentStacked ? C.GroupingValues.PercentStacked
+            : stacked ? C.GroupingValues.Stacked
+            : C.GroupingValues.Standard;
+
+        var lineChart = new C.LineChart(
+            new C.Grouping { Val = grouping },
+            new C.VaryColors { Val = false }
+        );
+
+        for (int i = 0; i < seriesData.Count; i++)
+        {
+            var color = ExcelDefaultSeriesColors[i % ExcelDefaultSeriesColors.Length];
+            lineChart.AppendChild(ExcelChartBuildLineSeries((uint)i, seriesData[i].name,
+                categories, seriesData[i].values, color));
+        }
+
+        lineChart.AppendChild(new C.ShowMarker { Val = true });
+        lineChart.AppendChild(new C.AxisId { Val = catAxisId });
+        lineChart.AppendChild(new C.AxisId { Val = valAxisId });
+        return lineChart;
+    }
+
+    private static C.AreaChart ExcelChartBuildAreaChart(
+        bool stacked, bool percentStacked,
+        string[]? categories, List<(string name, double[] values)> seriesData,
+        uint catAxisId, uint valAxisId)
+    {
+        var grouping = percentStacked ? C.GroupingValues.PercentStacked
+            : stacked ? C.GroupingValues.Stacked
+            : C.GroupingValues.Standard;
+
+        var areaChart = new C.AreaChart(
+            new C.Grouping { Val = grouping },
+            new C.VaryColors { Val = false }
+        );
+
+        for (int i = 0; i < seriesData.Count; i++)
+        {
+            var color = ExcelDefaultSeriesColors[i % ExcelDefaultSeriesColors.Length];
+            areaChart.AppendChild(ExcelChartBuildAreaSeries((uint)i, seriesData[i].name,
+                categories, seriesData[i].values, color));
+        }
+
+        areaChart.AppendChild(new C.AxisId { Val = catAxisId });
+        areaChart.AppendChild(new C.AxisId { Val = valAxisId });
+        return areaChart;
+    }
+
+    private static C.PieChart ExcelChartBuildPieChart(
+        string[]? categories, List<(string name, double[] values)> seriesData)
+    {
+        var pieChart = new C.PieChart(new C.VaryColors { Val = true });
+        if (seriesData.Count > 0)
+            pieChart.AppendChild(ExcelChartBuildPieSeries(0, seriesData[0].name,
+                categories, seriesData[0].values));
+        return pieChart;
+    }
+
+    private static C.DoughnutChart ExcelChartBuildDoughnutChart(
+        string[]? categories, List<(string name, double[] values)> seriesData)
+    {
+        var chart = new C.DoughnutChart(new C.VaryColors { Val = true });
+        if (seriesData.Count > 0)
+            chart.AppendChild(ExcelChartBuildPieSeries(0, seriesData[0].name,
+                categories, seriesData[0].values));
+        chart.AppendChild(new C.HoleSize { Val = 50 });
+        return chart;
+    }
+
+    private static C.ScatterChart ExcelChartBuildScatterChart(
+        string[]? categories, List<(string name, double[] values)> seriesData,
+        uint catAxisId, uint valAxisId)
+    {
+        var scatterChart = new C.ScatterChart(
+            new C.ScatterStyle { Val = C.ScatterStyleValues.LineMarker },
+            new C.VaryColors { Val = false }
+        );
+
+        double[]? xValues = null;
+        if (categories != null)
+            xValues = categories.Select(c => double.TryParse(c, out var v) ? v : 0).ToArray();
+
+        for (int i = 0; i < seriesData.Count; i++)
+        {
+            scatterChart.AppendChild(ExcelChartBuildScatterSeries((uint)i, seriesData[i].name,
+                xValues, seriesData[i].values));
+        }
+
+        scatterChart.AppendChild(new C.AxisId { Val = catAxisId });
+        scatterChart.AppendChild(new C.AxisId { Val = valAxisId });
+        return scatterChart;
+    }
+
+    // ==================== Series Builders ====================
+
+    private static void ExcelChartApplySeriesColor(OpenXmlCompositeElement series, string color)
+    {
+        series.RemoveAllChildren<C.ChartShapeProperties>();
+        var spPr = new C.ChartShapeProperties();
+        spPr.AppendChild(new Drawing.SolidFill(new Drawing.RgbColorModelHex { Val = color }));
+        var serText = series.GetFirstChild<C.SeriesText>();
+        if (serText != null)
+            serText.InsertAfterSelf(spPr);
+        else
+            series.PrependChild(spPr);
+    }
+
+    private static C.BarChartSeries ExcelChartBuildBarSeries(uint idx, string name,
+        string[]? categories, double[] values, string? color = null)
+    {
+        var series = new C.BarChartSeries(
+            new C.Index { Val = idx },
+            new C.Order { Val = idx },
+            new C.SeriesText(new C.StringLiteral(
+                new C.PointCount { Val = 1 },
+                new C.StringPoint(new C.NumericValue(name)) { Index = 0 }
+            ))
+        );
+        if (color != null) ExcelChartApplySeriesColor(series, color);
+        if (categories != null) series.AppendChild(ExcelChartBuildCategoryData(categories));
+        series.AppendChild(ExcelChartBuildValues(values));
+        return series;
+    }
+
+    private static C.LineChartSeries ExcelChartBuildLineSeries(uint idx, string name,
+        string[]? categories, double[] values, string? color = null)
+    {
+        var series = new C.LineChartSeries(
+            new C.Index { Val = idx },
+            new C.Order { Val = idx },
+            new C.SeriesText(new C.StringLiteral(
+                new C.PointCount { Val = 1 },
+                new C.StringPoint(new C.NumericValue(name)) { Index = 0 }
+            ))
+        );
+        if (color != null) ExcelChartApplySeriesColor(series, color);
+        if (categories != null) series.AppendChild(ExcelChartBuildCategoryData(categories));
+        series.AppendChild(ExcelChartBuildValues(values));
+        return series;
+    }
+
+    private static C.AreaChartSeries ExcelChartBuildAreaSeries(uint idx, string name,
+        string[]? categories, double[] values, string? color = null)
+    {
+        var series = new C.AreaChartSeries(
+            new C.Index { Val = idx },
+            new C.Order { Val = idx },
+            new C.SeriesText(new C.StringLiteral(
+                new C.PointCount { Val = 1 },
+                new C.StringPoint(new C.NumericValue(name)) { Index = 0 }
+            ))
+        );
+        if (color != null) ExcelChartApplySeriesColor(series, color);
+        if (categories != null) series.AppendChild(ExcelChartBuildCategoryData(categories));
+        series.AppendChild(ExcelChartBuildValues(values));
+        return series;
+    }
+
+    private static C.PieChartSeries ExcelChartBuildPieSeries(uint idx, string name,
+        string[]? categories, double[] values, string? color = null)
+    {
+        var series = new C.PieChartSeries(
+            new C.Index { Val = idx },
+            new C.Order { Val = idx },
+            new C.SeriesText(new C.StringLiteral(
+                new C.PointCount { Val = 1 },
+                new C.StringPoint(new C.NumericValue(name)) { Index = 0 }
+            ))
+        );
+        if (color != null) ExcelChartApplySeriesColor(series, color);
+        if (categories != null) series.AppendChild(ExcelChartBuildCategoryData(categories));
+        series.AppendChild(ExcelChartBuildValues(values));
+        return series;
+    }
+
+    private static C.ScatterChartSeries ExcelChartBuildScatterSeries(uint idx, string name,
+        double[]? xValues, double[] yValues)
+    {
+        var series = new C.ScatterChartSeries(
+            new C.Index { Val = idx },
+            new C.Order { Val = idx },
+            new C.SeriesText(new C.StringLiteral(
+                new C.PointCount { Val = 1 },
+                new C.StringPoint(new C.NumericValue(name)) { Index = 0 }
+            ))
+        );
+
+        if (xValues != null)
+        {
+            var xLit = new C.NumberLiteral(new C.PointCount { Val = (uint)xValues.Length });
+            for (int i = 0; i < xValues.Length; i++)
+                xLit.AppendChild(new C.NumericPoint(new C.NumericValue(xValues[i].ToString("G"))) { Index = (uint)i });
+            series.AppendChild(new C.XValues(xLit));
+        }
+
+        var yLit = new C.NumberLiteral(new C.PointCount { Val = (uint)yValues.Length });
+        for (int i = 0; i < yValues.Length; i++)
+            yLit.AppendChild(new C.NumericPoint(new C.NumericValue(yValues[i].ToString("G"))) { Index = (uint)i });
+        series.AppendChild(new C.YValues(yLit));
+
+        return series;
+    }
+
+    // ==================== Chart Data Builders ====================
+
+    private static C.CategoryAxisData ExcelChartBuildCategoryData(string[] categories)
+    {
+        var strLit = new C.StringLiteral(new C.PointCount { Val = (uint)categories.Length });
+        for (int i = 0; i < categories.Length; i++)
+            strLit.AppendChild(new C.StringPoint(new C.NumericValue(categories[i])) { Index = (uint)i });
+        return new C.CategoryAxisData(strLit);
+    }
+
+    private static C.Values ExcelChartBuildValues(double[] values)
+    {
+        var numLit = new C.NumberLiteral(
+            new C.FormatCode("General"),
+            new C.PointCount { Val = (uint)values.Length }
+        );
+        for (int i = 0; i < values.Length; i++)
+            numLit.AppendChild(new C.NumericPoint(new C.NumericValue(values[i].ToString("G"))) { Index = (uint)i });
+        return new C.Values(numLit);
+    }
+
+    // ==================== Chart Axis Builders ====================
+
+    private static C.CategoryAxis ExcelChartBuildCategoryAxis(uint axisId, uint crossAxisId)
+    {
+        return new C.CategoryAxis(
+            new C.AxisId { Val = axisId },
+            new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
+            new C.Delete { Val = false },
+            new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
+            new C.MajorTickMark { Val = C.TickMarkValues.Outside },
+            new C.MinorTickMark { Val = C.TickMarkValues.None },
+            new C.TickLabelPosition { Val = C.TickLabelPositionValues.NextTo },
+            new C.CrossingAxis { Val = crossAxisId },
+            new C.Crosses { Val = C.CrossesValues.AutoZero },
+            new C.AutoLabeled { Val = true },
+            new C.LabelAlignment { Val = C.LabelAlignmentValues.Center },
+            new C.LabelOffset { Val = 100 }
+        );
+    }
+
+    private static C.ValueAxis ExcelChartBuildValueAxis(uint axisId, uint crossAxisId, C.AxisPositionValues position)
+    {
+        return new C.ValueAxis(
+            new C.AxisId { Val = axisId },
+            new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
+            new C.Delete { Val = false },
+            new C.AxisPosition { Val = position },
+            new C.MajorGridlines(),
+            new C.NumberingFormat { FormatCode = "General", SourceLinked = true },
+            new C.MajorTickMark { Val = C.TickMarkValues.Outside },
+            new C.MinorTickMark { Val = C.TickMarkValues.None },
+            new C.TickLabelPosition { Val = C.TickLabelPositionValues.NextTo },
+            new C.CrossingAxis { Val = crossAxisId },
+            new C.Crosses { Val = C.CrossesValues.AutoZero },
+            new C.CrossBetween { Val = C.CrossBetweenValues.Between }
+        );
+    }
+
+    // ==================== Chart Title Builder ====================
+
+    private static C.Title ExcelChartBuildTitle(string titleText)
+    {
+        return new C.Title(
+            new C.ChartText(
+                new C.RichText(
+                    new Drawing.BodyProperties(),
+                    new Drawing.ListStyle(),
+                    new Drawing.Paragraph(
+                        new Drawing.ParagraphProperties(
+                            new Drawing.DefaultRunProperties { FontSize = 1400, Bold = true }
+                        ),
+                        new Drawing.Run(
+                            new Drawing.RunProperties { Language = "en-US", FontSize = 1400, Bold = true },
+                            new Drawing.Text(titleText)
+                        )
+                    )
+                )
+            ),
+            new C.Overlay { Val = false }
+        );
     }
 }

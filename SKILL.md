@@ -39,7 +39,7 @@ officecli get <file> '/body/p[3]' --depth 2 [--json]
 officecli query <file> 'paragraph[style=Normal] > run[font!=宋体]'
 ```
 
-**get** supports any XML path via element localName: `/body/tbl[1]/tblPr`, `/Sheet1/sheetViews/sheetView[1]`, `/slide[1]/cSld/spTree/sp[1]/nvSpPr`. Use `--depth N` to expand children.
+**get** supports any XML path via element localName: `/body/tbl[1]/tblPr`, `/Sheet1/sheetViews/sheetView[1]`, `/slide[1]/cSld/spTree/sp[1]/nvSpPr`. Use `--depth N` to expand children. Word also supports: `/` (core properties), `/footnote[N]`, `/endnote[N]`, `/toc[N]`, `/section[N]`, `/styles/StyleId` (N = id returned by add).
 
 **view modes:** `outline` (structure), `stats` (statistics with style inheritance), `issues` (`--type format|content|structure`, `--limit N`), `text` (plain with line numbers), `annotated` (with formatting)
 
@@ -72,14 +72,24 @@ officecli set doc.pptx '/slide[1]/cSld/spTree/sp[1]/txBody/p[1]/r[1]/rPr[1]/soli
 
 | Target | Path example | Properties |
 |--------|-------------|------------|
-| Word run | `/body/p[3]/r[1]` | `text`, `font`, `size`, `bold`, `italic`, `caps`, `smallCaps`, `strike`, `dstrike`, `vanish`, `outline`, `shadow`, `emboss`, `imprint`, `noProof`, `rtl`, `highlight`, `color`, `underline`, `shd`, ... |
+| Word run | `/body/p[3]/r[1]` | `text`, `font`, `size`, `bold`, `italic`, `caps`, `smallCaps`, `superscript`, `subscript`, `strike`, `dstrike`, `vanish`, `outline`, `shadow`, `emboss`, `imprint`, `noProof`, `rtl`, `highlight`, `color`, `underline`, `shd`, ... |
 | Word run image | `/body/p[5]/r[1]` | `alt`, `width`, `height` (cm/in/pt/px), ... |
-| Word paragraph | `/body/p[3]` | `style`, `alignment`, `firstLineIndent`, `shd`, `spaceBefore`, `spaceAfter`, `lineSpacing`, `numId`, `numLevel`/`ilvl`, `listStyle`(=bullet\|numbered\|none), `start`(numbering start value), ... |
+| Word paragraph | `/body/p[3]` | `style`, `alignment`, `firstLineIndent`, `leftIndent`, `rightIndent`, `hangingIndent`, `shd`, `spaceBefore`, `spaceAfter`, `lineSpacing`, `numId`, `numLevel`/`ilvl`, `listStyle`(=bullet\|numbered\|none), `start`, `keepNext`, `keepLines`, `pageBreakBefore`, `widowControl`, ... |
 | Word table cell | `/body/tbl[1]/tr[1]/tc[1]` | `text`, `font`, `size`, `bold`, `italic`, `color`, `shd`, `alignment`, `valign`(top\|center\|bottom), `width`, `vmerge`, `gridspan`, ... |
 | Word table row | `/body/tbl[1]/tr[1]` | `height`, `header`(bool), ... |
 | Word table | `/body/tbl[1]` | `alignment`, `width`, ... |
-| Word document | `/` | `defaultFont`, `pageBackground`, `pageWidth`, `pageHeight`, `marginTop/Bottom/Left/Right`, ... |
-| Excel cell | `/Sheet1/A1` | `value`, `formula`, `clear`, `font.bold/italic/strike/underline/color/size/name`, `fill`(hex RGB), `alignment.horizontal/vertical/wrapText`, `numFmt`, ... |
+| Word document | `/` | `defaultFont`, `pageBackground`, `pageWidth`, `pageHeight`, `marginTop/Bottom/Left/Right`, `title`, `author`, `subject`, `keywords`, `description`, `category`, ... |
+| Word footnote | `/footnote[N]` | `text` |
+| Word endnote | `/endnote[N]` | `text` |
+| Word TOC | `/toc[N]` | `levels`, `hyperlinks`(bool), `pagenumbers`(bool) |
+| Word section | `/section[N]` | `type`(nextPage\|continuous\|evenPage\|oddPage), `pagewidth`, `pageheight`, `orientation`, `marginTop/Bottom/Left/Right` |
+| Word style | `/styles/StyleId` | `name`, `basedon`, `next`, `font`, `size`, `bold`, `italic`, `color`, `alignment`, `spacebefore`, `spaceafter` |
+| Excel cell | `/Sheet1/A1` | `value`, `formula`, `clear`, `link`, `font.bold/italic/strike/underline/color/size/name`, `fill`(hex), `border.all/left/right/top/bottom`(thin\|medium\|thick\|double\|none), `border.color`, `alignment.horizontal/vertical/wrapText`, `numFmt`, ... |
+| Excel merge | `/Sheet1/A1:D1` | `merge`(bool) |
+| Excel column | `/Sheet1/col[A]` | `width`, `hidden`(bool) |
+| Excel row | `/Sheet1/row[1]` | `height`(pt), `hidden`(bool) |
+| Excel sheet | `/Sheet1` | `freeze`(cell ref, e.g. A2) |
+| Excel autofilter | `/Sheet1/autofilter` | `range`(e.g. A1:F100) |
 | PPT shape | `/slide[1]/shape[1]` | `text`, `font`, `size`, `bold`, `italic`, `color`, `fill`, `gradient`(linear/radial), `image`(blipFill), `line`, `lineWidth`, `lineDash`, `lineOpacity`, `opacity`, `shadow`, `glow`, `reflection`, ... |
 | PPT chart | `/slide[1]/chart[1]` | `title`, `legend`, `categories`, `data`, `series1..N`, `colors`, `dataLabels`, `axisTitle`, `catTitle`, `axisMin`, `axisMax`, `majorUnit`, `axisNumFmt` |
 | PPT video/audio | `/slide[1]/video[1]` | `volume`(0-100), `autoplay`(bool), `trimStart`(ms), `trimEnd`(ms), `x`, `y`, `width`, `height` |
@@ -97,8 +107,8 @@ Props listed are common examples, not exhaustive — most `set` shortcut propert
 
 | Format | Types & props |
 |--------|--------------|
-| Word | `paragraph`(text,font,size,bold,style,alignment,...), `run`(text,font,size,bold,italic,...), `table`(rows,cols), `picture`(path,width,height,alt,...), `equation`(formula,mode), `comment`(text,author,initials,date,...) |
-| Excel | `sheet`(name), `row`(cols), `cell`(ref,value,formula,...), `databar`(sqref,min,max,color,...) |
+| Word | `paragraph`(text,font,size,bold,style,alignment,keepNext,keepLines,...), `run`(text,font,size,bold,italic,superscript,subscript,...), `table`(rows,cols), `row`(cols,c1,c2,...), `cell`(text,width), `picture`(path,width,height,alt,...), `equation`(formula,mode), `comment`(text,author,...), `section`(type,orientation,...), `footnote`(text), `endnote`(text), `toc`(levels,title,...), `style`(name,id,font,size,bold,...) |
+| Excel | `sheet`(name), `row`(cols), `cell`(ref,value,formula,...), `autofilter`(range), `databar`(sqref,min,max,color), `colorscale`(sqref,mincolor,maxcolor,midcolor), `iconset`(sqref,iconset,reverse), `formulacf`(sqref,formula,fill), `chart`(chartType,title,categories,data/series1..N,legend,...) |
 | PPT | `slide`(title,text,layout,background,...), `shape`(text,font,size,name,...), `chart`(chartType,title,categories,data/series1..N,legend,colors,...), `video`/`audio`(path,poster,volume,autoplay,trimStart,trimEnd,...), `connector`(preset,line,...), `group`(shapes=1,2,3), `picture`(path,width,height,x,y,...), `equation`(formula) |
 
 Dimensions: raw EMU or suffixed `cm`/`in`/`pt`/`px`. Equation formula: LaTeX subset (`\frac{}{}`, `\sqrt{}`, `^{}`, `_{}`, `\sum`, Greek letters). Mode: `display`(default) or `inline`. Comment parent can be a paragraph (`/body/p[N]`) or a specific run (`/body/p[N]/r[M]`) for precise marking.

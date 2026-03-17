@@ -18,12 +18,159 @@ public partial class WordHandler
         if (path == "/" || path == "")
             return GetRootNode(depth);
 
+        // Footnote/Endnote paths: /footnote[N], /endnote[N]
+        var fnMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/footnote\[(\d+)\]$");
+        if (fnMatch.Success)
+        {
+            var fnId = int.Parse(fnMatch.Groups[1].Value);
+            var fn = _doc.MainDocumentPart?.FootnotesPart?.Footnotes?
+                .Elements<Footnote>().FirstOrDefault(f => f.Id?.Value == fnId);
+            if (fn == null)
+                return new DocumentNode { Path = path, Type = "error", Text = $"Footnote {fnId} not found" };
+            var fnNode = new DocumentNode { Path = path, Type = "footnote" };
+            fnNode.Text = string.Join("", fn.Descendants<Text>().Select(t => t.Text));
+            return fnNode;
+        }
+        var enMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/endnote\[(\d+)\]$");
+        if (enMatch.Success)
+        {
+            var enId = int.Parse(enMatch.Groups[1].Value);
+            var en = _doc.MainDocumentPart?.EndnotesPart?.Endnotes?
+                .Elements<Endnote>().FirstOrDefault(e => e.Id?.Value == enId);
+            if (en == null)
+                return new DocumentNode { Path = path, Type = "error", Text = $"Endnote {enId} not found" };
+            var enNode = new DocumentNode { Path = path, Type = "endnote" };
+            enNode.Text = string.Join("", en.Descendants<Text>().Select(t => t.Text));
+            return enNode;
+        }
+
+        // TOC paths: /toc[N]
+        var tocMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/toc\[(\d+)\]$");
+        if (tocMatch.Success)
+        {
+            var tocIdx = int.Parse(tocMatch.Groups[1].Value);
+            var tocParas = FindTocParagraphs();
+            if (tocIdx < 1 || tocIdx > tocParas.Count)
+                return new DocumentNode { Path = path, Type = "error", Text = $"TOC {tocIdx} not found (total: {tocParas.Count})" };
+
+            var tocPara = tocParas[tocIdx - 1];
+            var instrText = string.Join("", tocPara.Descendants<FieldCode>().Select(fc => fc.Text));
+            var tocNode = new DocumentNode { Path = path, Type = "toc" };
+            tocNode.Text = instrText.Trim();
+
+            // Parse field code switches
+            var levelsMatch = System.Text.RegularExpressions.Regex.Match(instrText, @"\\o\s+""([^""]+)""");
+            if (levelsMatch.Success) tocNode.Format["levels"] = levelsMatch.Groups[1].Value;
+            tocNode.Format["hyperlinks"] = instrText.Contains("\\h");
+            tocNode.Format["pageNumbers"] = !instrText.Contains("\\z");
+            return tocNode;
+        }
+
+        // Section paths: /section[N]
+        var secMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/section\[(\d+)\]$");
+        if (secMatch.Success)
+        {
+            var secIdx = int.Parse(secMatch.Groups[1].Value);
+            var sectionProps = FindSectionProperties();
+            if (secIdx < 1 || secIdx > sectionProps.Count)
+                return new DocumentNode { Path = path, Type = "error", Text = $"Section {secIdx} not found (total: {sectionProps.Count})" };
+
+            var sectPr = sectionProps[secIdx - 1];
+            var secNode = new DocumentNode { Path = path, Type = "section" };
+
+            var sectType = sectPr.GetFirstChild<SectionType>();
+            if (sectType?.Val?.Value != null)
+                secNode.Format["type"] = sectType.Val.InnerText;
+            var pageSize = sectPr.GetFirstChild<PageSize>();
+            if (pageSize?.Width?.Value != null) secNode.Format["pageWidth"] = pageSize.Width.Value;
+            if (pageSize?.Height?.Value != null) secNode.Format["pageHeight"] = pageSize.Height.Value;
+            if (pageSize?.Orient?.Value != null) secNode.Format["orientation"] = pageSize.Orient.InnerText;
+            var margin = sectPr.GetFirstChild<PageMargin>();
+            if (margin?.Top?.Value != null) secNode.Format["marginTop"] = margin.Top.Value;
+            if (margin?.Bottom?.Value != null) secNode.Format["marginBottom"] = margin.Bottom.Value;
+            if (margin?.Left?.Value != null) secNode.Format["marginLeft"] = margin.Left.Value;
+            if (margin?.Right?.Value != null) secNode.Format["marginRight"] = margin.Right.Value;
+            return secNode;
+        }
+
+        // Style paths: /styles/StyleId
+        var styleMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/styles/(.+)$");
+        if (styleMatch.Success)
+        {
+            var styleId = styleMatch.Groups[1].Value;
+            var styles = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles;
+            var style = styles?.Elements<Style>().FirstOrDefault(s =>
+                s.StyleId?.Value == styleId || s.StyleName?.Val?.Value == styleId);
+            if (style == null)
+                return new DocumentNode { Path = path, Type = "error", Text = $"Style '{styleId}' not found" };
+
+            var styleNode = new DocumentNode { Path = path, Type = "style" };
+            styleNode.Text = style.StyleName?.Val?.Value ?? styleId;
+            styleNode.Format["id"] = style.StyleId?.Value ?? "";
+            styleNode.Format["name"] = style.StyleName?.Val?.Value ?? "";
+            if (style.Type?.Value != null) styleNode.Format["type"] = style.Type.InnerText;
+            if (style.BasedOn?.Val?.Value != null) styleNode.Format["basedOn"] = style.BasedOn.Val.Value;
+            if (style.NextParagraphStyle?.Val?.Value != null) styleNode.Format["next"] = style.NextParagraphStyle.Val.Value;
+
+            // Read run properties
+            var rPr = style.StyleRunProperties;
+            if (rPr != null)
+            {
+                if (rPr.RunFonts?.Ascii?.Value != null) styleNode.Format["font"] = rPr.RunFonts.Ascii.Value;
+                if (rPr.FontSize?.Val?.Value != null) styleNode.Format["size"] = int.Parse(rPr.FontSize.Val.Value) / 2;
+                if (rPr.Bold != null) styleNode.Format["bold"] = true;
+                if (rPr.Italic != null) styleNode.Format["italic"] = true;
+                if (rPr.Color?.Val?.Value != null) styleNode.Format["color"] = rPr.Color.Val.Value;
+            }
+
+            // Read paragraph properties
+            var pPr = style.StyleParagraphProperties;
+            if (pPr != null)
+            {
+                if (pPr.Justification?.Val?.Value != null) styleNode.Format["alignment"] = pPr.Justification.Val.InnerText;
+                if (pPr.SpacingBetweenLines?.Before?.Value != null) styleNode.Format["spaceBefore"] = pPr.SpacingBetweenLines.Before.Value;
+                if (pPr.SpacingBetweenLines?.After?.Value != null) styleNode.Format["spaceAfter"] = pPr.SpacingBetweenLines.After.Value;
+            }
+            return styleNode;
+        }
+
         var parts = ParsePath(path);
         var element = NavigateToElement(parts);
         if (element == null)
             return new DocumentNode { Path = path, Type = "error", Text = $"Path not found: {path}" };
 
         return ElementToNode(element, path, depth);
+    }
+
+    /// <summary>Find all SectionProperties in the document (paragraph-level + body-level).</summary>
+    private List<SectionProperties> FindSectionProperties()
+    {
+        var body = _doc.MainDocumentPart?.Document?.Body;
+        if (body == null) return new();
+
+        var result = new List<SectionProperties>();
+        // Paragraph-level section properties (section breaks)
+        foreach (var p in body.Elements<Paragraph>())
+        {
+            var sectPr = p.ParagraphProperties?.GetFirstChild<SectionProperties>();
+            if (sectPr != null) result.Add(sectPr);
+        }
+        // Body-level section properties (last section)
+        var bodySectPr = body.GetFirstChild<SectionProperties>();
+        if (bodySectPr != null) result.Add(bodySectPr);
+        return result;
+    }
+
+    /// <summary>Find all paragraphs containing TOC field codes.</summary>
+    private List<Paragraph> FindTocParagraphs()
+    {
+        var body = _doc.MainDocumentPart?.Document?.Body;
+        if (body == null) return new();
+
+        return body.Elements<Paragraph>()
+            .Where(p => p.Descendants<FieldCode>().Any(fc =>
+                fc.Text != null && fc.Text.TrimStart().StartsWith("TOC", StringComparison.OrdinalIgnoreCase)))
+            .ToList();
     }
 
     public List<DocumentNode> Query(string selector)

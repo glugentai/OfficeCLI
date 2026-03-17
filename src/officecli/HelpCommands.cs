@@ -143,19 +143,33 @@ Word (.docx) — get
 
 Get a document node by DOM path. Returns node type, properties, and children.
 
-Supports any XML path via element localName:
-  /body/p[3]              Paragraph 3
-  /body/tbl[1]/tblPr      Table 1 properties
-  /body/p[1]/r[1]/rPr     Run properties of first run
+Standard paths:
+  /                        Document root (core properties: title, author, ...)
+  /body/p[3]               Paragraph 3
+  /body/p[1]/r[1]          Run 1 (format: font, size, bold, italic, superscript, subscript)
+  /body/tbl[1]/tr[1]/tc[1] Table cell
+  /footnote[N]             Footnote N (N = id from add, returns text)
+  /endnote[N]              Endnote N (N = id from add, returns text)
+  /toc[N]                  TOC N (returns levels, hyperlinks, pageNumbers)
+  /section[N]              Section N (returns type, pageWidth/Height, orientation, margins)
+  /styles/StyleId          Style (returns font, size, bold, color, alignment, ...)
+
+Also supports any XML path via element localName:
+  /body/tbl[1]/tblPr       Table 1 properties
+  /body/p[1]/r[1]/rPr      Run properties of first run
 
 Options:
   --depth N   Depth of child nodes to include (default 1)
   --json      Output as JSON
 
 Examples:
-  officecli get doc.docx /                     # document root
+  officecli get doc.docx /                     # document root + core properties
   officecli get doc.docx '/body/p[1]' --depth 3
   officecli get doc.docx '/body/tbl[1]/tr[1]/tc[1]' --json
+  officecli get doc.docx '/footnote[1]'        # footnote text
+  officecli get doc.docx '/toc[1]'             # TOC field properties
+  officecli get doc.docx '/section[1]'         # section page setup
+  officecli get doc.docx '/styles/Heading1'    # style definition
 """;
 
     const string DocxQuery = """
@@ -186,14 +200,17 @@ Usage: officecli set <file> <path> --prop key=value [--prop key=value ...]
 
 Run properties (/body/p[N]/r[M]):
   text, font, size, bold, italic, color, underline, strike, highlight,
-  caps, smallCaps, dstrike, vanish, outline, shadow, emboss, imprint,
-  noProof, rtl, shd (format: "fill" or "pattern;fill" or "pattern;fill;color")
+  caps, smallCaps, superscript, subscript, dstrike, vanish, outline,
+  shadow, emboss, imprint, noProof, rtl,
+  shd (format: "fill" or "pattern;fill" or "pattern;fill;color")
   For images in runs: alt, width, height (cm/in/pt/px or raw EMU)
 
 Paragraph properties (/body/p[N]):
-  style, alignment (left|center|right|justify), firstLineIndent,
+  style, alignment (left|center|right|justify),
+  firstLineIndent, leftIndent, rightIndent, hangingIndent (twips),
   shd, spaceBefore, spaceAfter, lineSpacing, numId, numLevel/ilvl,
-  listStyle (bullet|numbered|none), start (numbering start value)
+  listStyle (bullet|numbered|none), start (numbering start value),
+  keepNext, keepLines, pageBreakBefore, widowControl (bool)
 
 Table cell properties (/body/tbl[N]/tr[R]/tc[C]):
   text, font, size, bold, italic, color, shd, alignment,
@@ -207,7 +224,27 @@ Table properties (/body/tbl[N]):
 
 Document root (/):
   defaultFont, pageBackground, pageWidth, pageHeight,
-  marginTop, marginBottom, marginLeft, marginRight
+  marginTop, marginBottom, marginLeft, marginRight,
+  title, author, subject, keywords, description, category,
+  lastModifiedBy, revision
+
+Footnote (/footnote[N]):
+  text
+
+Endnote (/endnote[N]):
+  text
+
+TOC (/toc[N]):
+  levels (e.g. "1-3"), hyperlinks (bool), pagenumbers (bool)
+
+Section (/section[N]):
+  type (nextPage|continuous|evenPage|oddPage),
+  pagewidth, pageheight (twips), orientation (portrait|landscape),
+  margintop, marginbottom, marginleft, marginright (twips)
+
+Style (/styles/StyleId):
+  name, basedon, next, font, size, bold, italic, color,
+  alignment, spacebefore, spaceafter
 
 Any XML attribute is also settable via element path (use get --depth N to find paths).
 Composite props (pBdr, tabs, lang, bdr) -> use raw-set instead.
@@ -217,9 +254,11 @@ Examples:
   officecli set doc.docx '/body/p[2]' --prop style=Heading1 --prop alignment=center
   officecli set doc.docx '/body/tbl[1]/tr[1]/tc[1]' --prop text="Hello" --prop shd=4472C4
   officecli set doc.docx '/body/tbl[1]/tr[1]/tc[1]' --prop valign=center --prop gridspan=2
-  officecli set doc.docx / --prop defaultFont=Arial --prop marginTop=1440
-  officecli set doc.docx '/body/p[5]/r[1]' --prop width=5cm --prop alt="Logo"
-  officecli set doc.docx '/body/p[1]/r[1]' --prop link="https://example.com"
+  officecli set doc.docx / --prop defaultFont=Arial --prop title="My Doc" --prop author="John"
+  officecli set doc.docx '/footnote[1]' --prop text="Updated footnote"
+  officecli set doc.docx '/toc[1]' --prop levels="1-2" --prop pagenumbers=false
+  officecli set doc.docx '/section[1]' --prop orientation=landscape --prop margintop=720
+  officecli set doc.docx '/styles/Heading1' --prop font=Arial --prop size=16 --prop bold=true
 """;
 
     const string DocxAdd = """
@@ -233,15 +272,24 @@ Types and properties:
 
   paragraph (p)  -- parent: /body or /body/tbl[N]/tr[R]/tc[C]
     text, font, size, bold, italic, color, underline, strike, highlight,
-    caps, smallCaps, style, alignment, firstLineIndent, spaceBefore,
-    spaceAfter, lineSpacing, numId, numLevel, shd, listStyle, start
+    caps, smallCaps, superscript, subscript, style, alignment,
+    firstLineIndent, leftIndent, rightIndent, hangingIndent,
+    spaceBefore, spaceAfter, lineSpacing, numId, numLevel, shd,
+    listStyle, start, keepNext, keepLines, pageBreakBefore, widowControl
 
   run (r)  -- parent: /body/p[N]
     text, font, size, bold, italic, color, underline, strike, highlight,
-    caps, smallCaps, shd
+    caps, smallCaps, superscript, subscript, shd
 
   table (tbl)  -- parent: /body
     rows (int), cols (int)
+
+  row (tr)  -- parent: /body/tbl[N]
+    cols (int, default: match existing), height (twips),
+    c1, c2, ... (cell text shortcuts)
+
+  cell (tc)  -- parent: /body/tbl[N]/tr[M]
+    text, width (twips)
 
   picture (image, img)  -- parent: /body/p[N] or /body
     path (required), width, height (cm/in/pt/px/EMU), alt
@@ -257,16 +305,48 @@ Types and properties:
   comment  -- parent: /body/p[N] or /body/p[N]/r[M]
     text (required), author, initials, date (ISO format)
 
+  section (sectionbreak)  -- parent: /body
+    type (nextPage|continuous|evenPage|oddPage, default: nextPage),
+    pagewidth, pageheight (twips), orientation (portrait|landscape)
+
+  footnote  -- parent: /body/p[N]
+    text (required)
+
+  endnote  -- parent: /body/p[N]
+    text (required)
+
+  toc (tableofcontents)  -- parent: /body
+    levels (default "1-3"), title, hyperlinks (true|false),
+    pagenumbers (true|false)
+
+  style  -- parent: /body (creates in styles part)
+    name (required), id, type (paragraph|character|table),
+    basedon, next, font, size, bold, italic, color,
+    alignment, spacebefore, spaceafter
+
 --index is 0-based. If omitted, appends to end.
 --from clones an element (cross-part relationships handled automatically).
+
+Document properties (via set / path):
+  title, author, subject, keywords, description, category,
+  lastModifiedBy, revision
 
 Examples:
   officecli add doc.docx /body --type paragraph --prop text="Hello World" --prop style=Heading1
   officecli add doc.docx '/body/p[1]' --type run --prop text="bold text" --prop bold=true
+  officecli add doc.docx '/body/p[1]' --type run --prop text="2" --prop superscript=true
   officecli add doc.docx /body --type table --prop rows=3 --prop cols=4
+  officecli add doc.docx '/body/tbl[1]' --type row --prop c1="Name" --prop c2="Value"
+  officecli add doc.docx '/body/tbl[1]/tr[1]' --type cell --prop text="Extra"
   officecli add doc.docx /body --type picture --prop path=logo.png --prop width=5cm
   officecli add doc.docx '/body/p[1]' --type equation --prop formula="\frac{a}{b}"
   officecli add doc.docx '/body/p[3]' --type comment --prop text="Please review"
+  officecli add doc.docx /body --type section --prop type=nextPage
+  officecli add doc.docx '/body/p[1]' --type footnote --prop text="See reference 1"
+  officecli add doc.docx '/body/p[1]' --type endnote --prop text="Additional info"
+  officecli add doc.docx /body --type toc --prop levels="1-3" --prop title="Contents"
+  officecli add doc.docx /body --type style --prop name=MyStyle --prop font=Arial --prop bold=true
+  officecli set doc.docx / --prop title="My Doc" --prop author="John"
   officecli add doc.docx /body --from '/body/p[1]' --index 5
 """;
 
@@ -405,42 +485,44 @@ Examples:
 Excel (.xlsx) — set
 ====================
 
-Usage: officecli set <file> '/SheetName/CellRef' --prop key=value [--prop ...]
+Usage: officecli set <file> '<path>' --prop key=value [--prop ...]
 
-Content properties:
-  value          Cell value (auto-detects number vs string)
-  formula        Formula (e.g. =SUM(A1:A10))
-  type           Force type: string|str, number|num, boolean|bool
-  clear          Clear cell value and formula
+Cell properties (/SheetName/A1):
+  value, formula, type (string|number|boolean), clear, link ("none" to remove)
 
-Font properties (prefix with font.):
+Cell style properties (/SheetName/A1):
   font.bold, font.italic, font.strike, font.underline (true/false or single/double)
-  font.color     Hex RGB (e.g. FF0000)
-  font.size      Point size (e.g. 11)
-  font.name      Font family (e.g. Calibri)
+  font.color (hex), font.size (pt), font.name
+  fill (hex RGB), numFmt (format string)
+  alignment.horizontal (left|center|right|justify)
+  alignment.vertical (top|center|bottom), alignment.wrapText (bool)
+  border.all (thin|medium|thick|double|dashed|dotted|none)
+  border.left, border.right, border.top, border.bottom (style)
+  border.color (hex), border.left.color, ... (per-side color)
 
-Fill:
-  fill           Hex RGB background color (e.g. 4472C4)
+Merge/Unmerge (/SheetName/A1:D1):
+  merge          true = merge range, false = unmerge
 
-Alignment (prefix with alignment.):
-  alignment.horizontal    left, center, right, justify
-  alignment.vertical      top, center, bottom
-  alignment.wrapText      true/false
+Column properties (/SheetName/col[A]):
+  width          Column width (number), hidden (bool)
 
-Number format:
-  numFmt         Format string (e.g. "0%", "0.00", "#,##0")
+Row properties (/SheetName/row[1]):
+  height         Row height in points, hidden (bool)
 
-Hyperlink:
-  link           URL for the cell hyperlink. "none" to remove.
+Sheet properties (/SheetName):
+  freeze         Freeze panes (e.g. "A2" = freeze row 1, "B2" = freeze row 1 + col A)
+
+AutoFilter (/SheetName/autofilter):
+  range          Update filter range (e.g. A1:F100)
 
 Examples:
-  officecli set data.xlsx '/Sheet1/A1' --prop value=100
-  officecli set data.xlsx '/Sheet1/B2' --prop formula="=SUM(A1:A10)"
-  officecli set data.xlsx '/Sheet1/A1' --prop font.bold=true --prop font.color=FF0000
-  officecli set data.xlsx '/Sheet1/C3' --prop fill=4472C4 --prop font.size=14
-  officecli set data.xlsx '/Sheet1/A1' --prop alignment.horizontal=center --prop alignment.wrapText=true
-  officecli set data.xlsx '/Sheet1/D1' --prop numFmt="0.00%"
-  officecli set data.xlsx '/Sheet1/A1' --prop clear=true
+  officecli set data.xlsx '/Sheet1/A1' --prop value=100 --prop font.bold=true
+  officecli set data.xlsx '/Sheet1/A1' --prop border.all=thin --prop border.color=000000
+  officecli set data.xlsx '/Sheet1/A1:D1' --prop merge=true
+  officecli set data.xlsx '/Sheet1/col[A]' --prop width=20
+  officecli set data.xlsx '/Sheet1/row[1]' --prop height=30
+  officecli set data.xlsx /Sheet1 --prop freeze=A2
+  officecli set data.xlsx '/Sheet1/autofilter' --prop range=A1:F100
 """;
 
     const string XlsxAdd = """
@@ -462,6 +544,27 @@ Types and properties:
   databar (conditionalformatting)  -- parent: /SheetName
     sqref (e.g. A1:A10), min, max, color (hex)
 
+  colorscale  -- parent: /SheetName
+    sqref (e.g. A1:A10), mincolor (hex, default F8696B),
+    maxcolor (hex, default 63BE7B), midcolor (hex, optional for 3-color)
+
+  iconset  -- parent: /SheetName
+    sqref (e.g. A1:A10), iconset (default 3TrafficLights1),
+    reverse (bool), showvalue (bool, default true)
+    Icon sets: 3Arrows, 3ArrowsGray, 3Flags, 3TrafficLights1, 3TrafficLights2,
+      3Signs, 3Symbols, 3Symbols2, 4Arrows, 4ArrowsGray, 4Rating, 4RedToBlack,
+      4TrafficLights, 5Arrows, 5ArrowsGray, 5Rating, 5Quarters
+
+  formulacf  -- parent: /SheetName
+    sqref (e.g. A1:A10), formula (e.g. $A1>100),
+    fill (hex), font.color (hex), font.bold (bool)
+
+  chart  -- parent: /SheetName
+    chartType (column|bar|line|pie|doughnut|area|scatter)
+    title, categories (comma-separated), legend (top|bottom|left|right|none)
+    data ("Series1:1,2,3;Series2:4,5,6") or series1/series2/... ("Name:1,2,3")
+    x, y (col/row offset), width, height (col/row span)
+
 --index is 0-based. --from clones an existing element.
 
 Examples:
@@ -469,6 +572,10 @@ Examples:
   officecli add data.xlsx /Sheet1 --type row --prop cols=5
   officecli add data.xlsx /Sheet1 --type cell --prop ref=A1 --prop value=100 --prop fill=4472C4
   officecli add data.xlsx /Sheet1 --type databar --prop sqref=B2:B20 --prop color=63C384
+  officecli add data.xlsx /Sheet1 --type colorscale --prop sqref=A1:A20 --prop mincolor=F8696B --prop maxcolor=63BE7B
+  officecli add data.xlsx /Sheet1 --type iconset --prop sqref=B1:B10 --prop iconset=3Arrows
+  officecli add data.xlsx /Sheet1 --type formulacf --prop sqref=A1:A10 --prop formula="$A1>100" --prop fill=FF0000
+  officecli add data.xlsx /Sheet1 --type chart --prop chartType=column --prop title="Sales" --prop data="Q1:100,200;Q2:150,250" --prop categories="Jan,Feb"
   officecli set data.xlsx '/Sheet1/A1' --prop link="https://example.com"
 """;
 
@@ -893,6 +1000,13 @@ Types and properties:
     rows (default 3), cols (default 3), name,
     x, y, width, height (EMU or cm/in/pt/px)
 
+  row (tr)  -- parent: /slide[N]/table[M]
+    cols (int, default: match existing), height (EMU or cm/in/pt/px),
+    c1, c2, ... (cell text shortcuts)
+
+  cell (tc)  -- parent: /slide[N]/table[M]/tr[R]
+    text
+
   picture (image, img)  -- parent: /slide[N]
     path (required), name, alt, width, height, x, y
     Formats: .png, .jpg, .jpeg, .gif, .bmp, .tif, .tiff, .emf, .wmf, .svg
@@ -932,6 +1046,8 @@ Examples:
   officecli add pres.pptx '/slide[1]' --type chart --prop chartType=pie --prop title="Market Share" --prop categories="Apple,Google,MS" --prop series1="Share:40,30,30"
   officecli add pres.pptx '/slide[1]' --type chart --prop chartType=line --prop series1="Trend:1,3,2,5" --prop legend=top
   officecli add pres.pptx '/slide[1]' --type table --prop rows=3 --prop cols=4
+  officecli add pres.pptx '/slide[1]/table[1]' --type row --prop c1="Name" --prop c2="Value"
+  officecli add pres.pptx '/slide[1]/table[1]/tr[1]' --type cell --prop text="Extra"
   officecli add pres.pptx '/slide[1]' --type picture --prop path=photo.jpg --prop width=8cm --prop alt="Team photo"
   officecli add pres.pptx '/slide[1]' --type equation --prop formula="\frac{-b \pm \sqrt{b^2-4ac}}{2a}"
   officecli add pres.pptx / --from '/slide[1]' --index 0

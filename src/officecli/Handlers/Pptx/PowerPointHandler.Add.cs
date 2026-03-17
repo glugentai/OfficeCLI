@@ -985,6 +985,102 @@ public partial class PowerPointHandler
                 return $"/slide[{grpSlideIdx}]/group[{grpCount}]";
             }
 
+            case "row" or "tr":
+            {
+                // Resolve parent table via logical path
+                var rowLogical = ResolveLogicalPath(parentPath);
+                if (!rowLogical.HasValue || rowLogical.Value.element is not Drawing.Table rowTable)
+                    throw new ArgumentException("Rows can only be added to a table: /slide[N]/table[M]");
+
+                var rowSlidePart = rowLogical.Value.slidePart;
+
+                // Determine column count from existing grid
+                var existingColCount = rowTable.Elements<Drawing.TableGrid>().FirstOrDefault()
+                    ?.Elements<Drawing.GridColumn>().Count() ?? 1;
+                int newColCount = properties.TryGetValue("cols", out var rcVal) ? int.Parse(rcVal) : existingColCount;
+
+                // Row height: default from first existing row, or 370840 EMU (~1cm)
+                long newRowHeight = properties.TryGetValue("height", out var rhVal)
+                    ? ParseEmu(rhVal)
+                    : rowTable.Elements<Drawing.TableRow>().FirstOrDefault()?.Height?.Value ?? 370840;
+
+                var newTblRow = new Drawing.TableRow { Height = newRowHeight };
+                for (int c = 0; c < newColCount; c++)
+                {
+                    var newTblCell = new Drawing.TableCell();
+                    var cellText = properties.TryGetValue($"c{c + 1}", out var ct) ? ct : "";
+                    var bodyProps = new Drawing.BodyProperties();
+                    var listStyle = new Drawing.ListStyle();
+                    var cellPara = new Drawing.Paragraph();
+                    if (!string.IsNullOrEmpty(cellText))
+                        cellPara.Append(new Drawing.Run(
+                            new Drawing.RunProperties { Language = "zh-CN" },
+                            new Drawing.Text(cellText)));
+                    else
+                        cellPara.Append(new Drawing.EndParagraphRunProperties { Language = "zh-CN" });
+                    newTblCell.Append(new Drawing.TextBody(bodyProps, listStyle, cellPara));
+                    newTblCell.Append(new Drawing.TableCellProperties());
+                    newTblRow.Append(newTblCell);
+                }
+
+                if (index.HasValue)
+                {
+                    var existingRows = rowTable.Elements<Drawing.TableRow>().ToList();
+                    if (index.Value < existingRows.Count)
+                        rowTable.InsertBefore(newTblRow, existingRows[index.Value]);
+                    else
+                        rowTable.AppendChild(newTblRow);
+                }
+                else
+                {
+                    rowTable.AppendChild(newTblRow);
+                }
+
+                GetSlide(rowSlidePart).Save();
+                var rowIdx = rowTable.Elements<Drawing.TableRow>().ToList().IndexOf(newTblRow) + 1;
+                return $"{parentPath}/tr[{rowIdx}]";
+            }
+
+            case "cell" or "tc":
+            {
+                // Resolve parent row via logical path
+                var cellLogical = ResolveLogicalPath(parentPath);
+                if (!cellLogical.HasValue || cellLogical.Value.element is not Drawing.TableRow cellRow)
+                    throw new ArgumentException("Cells can only be added to a table row: /slide[N]/table[M]/tr[R]");
+
+                var cellSlidePart = cellLogical.Value.slidePart;
+
+                var newCell = new Drawing.TableCell();
+                var cBodyProps = new Drawing.BodyProperties();
+                var cListStyle = new Drawing.ListStyle();
+                var cPara = new Drawing.Paragraph();
+                if (properties.TryGetValue("text", out var cText) && !string.IsNullOrEmpty(cText))
+                    cPara.Append(new Drawing.Run(
+                        new Drawing.RunProperties { Language = "zh-CN" },
+                        new Drawing.Text(cText)));
+                else
+                    cPara.Append(new Drawing.EndParagraphRunProperties { Language = "zh-CN" });
+                newCell.Append(new Drawing.TextBody(cBodyProps, cListStyle, cPara));
+                newCell.Append(new Drawing.TableCellProperties());
+
+                if (index.HasValue)
+                {
+                    var existingCells = cellRow.Elements<Drawing.TableCell>().ToList();
+                    if (index.Value < existingCells.Count)
+                        cellRow.InsertBefore(newCell, existingCells[index.Value]);
+                    else
+                        cellRow.AppendChild(newCell);
+                }
+                else
+                {
+                    cellRow.AppendChild(newCell);
+                }
+
+                GetSlide(cellSlidePart).Save();
+                var cellIdx = cellRow.Elements<Drawing.TableCell>().ToList().IndexOf(newCell) + 1;
+                return $"{parentPath}/tc[{cellIdx}]";
+            }
+
             default:
             {
                 // Try resolving logical paths (table/placeholder) first
