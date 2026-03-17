@@ -99,6 +99,29 @@ public partial class WordHandler
                     }
                     pProps.Shading = shd;
                 }
+                if (properties.TryGetValue("leftindent", out var addLI) || properties.TryGetValue("indentleft", out addLI))
+                {
+                    var ind = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                    ind.Left = addLI;
+                }
+                if (properties.TryGetValue("rightindent", out var addRI) || properties.TryGetValue("indentright", out addRI))
+                {
+                    var ind = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                    ind.Right = addRI;
+                }
+                if (properties.TryGetValue("hangingindent", out var addHI) || properties.TryGetValue("hanging", out addHI))
+                {
+                    var ind = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                    ind.Hanging = addHI;
+                }
+                if (properties.TryGetValue("keepnext", out var addKN) && bool.Parse(addKN))
+                    pProps.KeepNext = new KeepNext();
+                if ((properties.TryGetValue("keeplines", out var addKL) || properties.TryGetValue("keeptogether", out addKL)) && bool.Parse(addKL))
+                    pProps.KeepLines = new KeepLines();
+                if (properties.TryGetValue("pagebreakbefore", out var addPBB) && bool.Parse(addPBB))
+                    pProps.PageBreakBefore = new PageBreakBefore();
+                if (properties.TryGetValue("widowcontrol", out var addWC) && bool.Parse(addWC))
+                    pProps.WidowControl = new WidowControl();
                 if (properties.TryGetValue("liststyle", out var listStyle))
                 {
                     para.AppendChild(pProps);
@@ -139,6 +162,10 @@ public partial class WordHandler
                         rProps.Caps = new Caps();
                     if (properties.TryGetValue("smallcaps", out var pSmallCaps) && bool.Parse(pSmallCaps))
                         rProps.SmallCaps = new SmallCaps();
+                    if (properties.TryGetValue("superscript", out var pSup) && bool.Parse(pSup))
+                        rProps.VerticalTextAlignment = new VerticalTextAlignment { Val = VerticalPositionValues.Superscript };
+                    if (properties.TryGetValue("subscript", out var pSub) && bool.Parse(pSub))
+                        rProps.VerticalTextAlignment = new VerticalTextAlignment { Val = VerticalPositionValues.Subscript };
                     if (properties.TryGetValue("shd", out var pShd) || properties.TryGetValue("shading", out pShd))
                     {
                         var shdParts = pShd.Split(';');
@@ -263,6 +290,10 @@ public partial class WordHandler
                     newRProps.Caps = new Caps();
                 if (properties.TryGetValue("smallcaps", out var rSmallCaps) && bool.Parse(rSmallCaps))
                     newRProps.SmallCaps = new SmallCaps();
+                if (properties.TryGetValue("superscript", out var rSup) && bool.Parse(rSup))
+                    newRProps.VerticalTextAlignment = new VerticalTextAlignment { Val = VerticalPositionValues.Superscript };
+                if (properties.TryGetValue("subscript", out var rSub) && bool.Parse(rSub))
+                    newRProps.VerticalTextAlignment = new VerticalTextAlignment { Val = VerticalPositionValues.Subscript };
                 if (properties.TryGetValue("shd", out var rShd) || properties.TryGetValue("shading", out rShd))
                 {
                     var shdParts = rShd.Split(';');
@@ -340,6 +371,81 @@ public partial class WordHandler
                 resultPath = $"{parentPath}/tbl[{tblCount}]";
                 newElement = table;
                 break;
+
+            case "row" or "tr":
+            {
+                if (parent is not Table targetTable)
+                    throw new ArgumentException("Rows can only be added to a table: /body/tbl[N]");
+
+                var existingCols = targetTable.Elements<TableGrid>().FirstOrDefault()
+                    ?.Elements<GridColumn>().Count() ?? 1;
+                int newCols = properties.TryGetValue("cols", out var colsVal) ? int.Parse(colsVal) : existingCols;
+
+                var newRow = new TableRow();
+                if (properties.TryGetValue("height", out var rowHeight))
+                    newRow.AppendChild(new TableRowProperties(
+                        new TableRowHeight { Val = uint.Parse(rowHeight) }));
+
+                for (int c = 0; c < newCols; c++)
+                {
+                    var cellText = properties.TryGetValue($"c{c + 1}", out var ct) ? ct : "";
+                    var cellPara = new Paragraph();
+                    if (!string.IsNullOrEmpty(cellText))
+                        cellPara.AppendChild(new Run(new Text(cellText) { Space = SpaceProcessingModeValues.Preserve }));
+                    newRow.AppendChild(new TableCell(cellPara));
+                }
+
+                if (index.HasValue)
+                {
+                    var existingRows = targetTable.Elements<TableRow>().ToList();
+                    if (index.Value < existingRows.Count)
+                        targetTable.InsertBefore(newRow, existingRows[index.Value]);
+                    else
+                        targetTable.AppendChild(newRow);
+                }
+                else
+                {
+                    targetTable.AppendChild(newRow);
+                }
+
+                var rowIdx = targetTable.Elements<TableRow>().ToList().IndexOf(newRow) + 1;
+                resultPath = $"{parentPath}/tr[{rowIdx}]";
+                newElement = newRow;
+                break;
+            }
+
+            case "cell" or "tc":
+            {
+                if (parent is not TableRow targetRow)
+                    throw new ArgumentException("Cells can only be added to a table row: /body/tbl[N]/tr[M]");
+
+                var cellParagraph = new Paragraph();
+                if (properties.TryGetValue("text", out var cellTxt))
+                    cellParagraph.AppendChild(new Run(new Text(cellTxt) { Space = SpaceProcessingModeValues.Preserve }));
+
+                var newCell = new TableCell(cellParagraph);
+
+                if (properties.TryGetValue("width", out var cellWidth))
+                    newCell.PrependChild(new TableCellProperties(new TableCellWidth { Width = cellWidth, Type = TableWidthUnitValues.Dxa }));
+
+                if (index.HasValue)
+                {
+                    var cells = targetRow.Elements<TableCell>().ToList();
+                    if (index.Value < cells.Count)
+                        targetRow.InsertBefore(newCell, cells[index.Value]);
+                    else
+                        targetRow.AppendChild(newCell);
+                }
+                else
+                {
+                    targetRow.AppendChild(newCell);
+                }
+
+                var cellIdx = targetRow.Elements<TableCell>().ToList().IndexOf(newCell) + 1;
+                resultPath = $"{parentPath}/tc[{cellIdx}]";
+                newElement = newCell;
+                break;
+            }
 
             case "picture" or "image" or "img":
                 if (!properties.TryGetValue("path", out var imgPath))
@@ -489,6 +595,314 @@ public partial class WordHandler
                 var hlCount = hlPara.Elements<Hyperlink>().Count();
                 resultPath = $"{parentPath}/hyperlink[{hlCount}]";
                 newElement = hyperlink;
+                break;
+            }
+
+            case "section" or "sectionbreak":
+            {
+                // Section break: adds SectionProperties to the last paragraph before the break point
+                var breakType = properties.GetValueOrDefault("type", "nextPage").ToLowerInvariant();
+                var sectType = breakType switch
+                {
+                    "nextpage" or "next" => SectionMarkValues.NextPage,
+                    "continuous" => SectionMarkValues.Continuous,
+                    "evenpage" or "even" => SectionMarkValues.EvenPage,
+                    "oddpage" or "odd" => SectionMarkValues.OddPage,
+                    _ => SectionMarkValues.NextPage
+                };
+
+                // Create a paragraph with section properties to mark the break
+                var sectPara = new Paragraph();
+                var sectPProps = new ParagraphProperties();
+                var sectPr = new SectionProperties();
+                sectPr.AppendChild(new SectionType { Val = sectType });
+
+                // Copy page size/margins from document section, or use A4 defaults
+                var bodySectPr = body.GetFirstChild<SectionProperties>();
+                var srcPageSize = bodySectPr?.GetFirstChild<PageSize>();
+                sectPr.AppendChild(new PageSize
+                {
+                    Width = srcPageSize?.Width ?? 11906,   // A4 width
+                    Height = srcPageSize?.Height ?? 16838,  // A4 height
+                    Orient = srcPageSize?.Orient
+                });
+                var srcMargin = bodySectPr?.GetFirstChild<PageMargin>();
+                sectPr.AppendChild(new PageMargin
+                {
+                    Top = srcMargin?.Top ?? 1440,
+                    Bottom = srcMargin?.Bottom ?? 1440,
+                    Left = srcMargin?.Left ?? 1800,
+                    Right = srcMargin?.Right ?? 1800
+                });
+
+                // Allow per-section overrides
+                if (properties.TryGetValue("pagewidth", out var sw))
+                    (sectPr.GetFirstChild<PageSize>() ?? sectPr.AppendChild(new PageSize())).Width = uint.Parse(sw);
+                if (properties.TryGetValue("pageheight", out var sh))
+                    (sectPr.GetFirstChild<PageSize>() ?? sectPr.AppendChild(new PageSize())).Height = uint.Parse(sh);
+                if (properties.TryGetValue("orientation", out var orient))
+                {
+                    var ps = sectPr.GetFirstChild<PageSize>() ?? sectPr.AppendChild(new PageSize());
+                    ps.Orient = orient.ToLowerInvariant() == "landscape"
+                        ? PageOrientationValues.Landscape
+                        : PageOrientationValues.Portrait;
+                    // Swap width/height for landscape if needed
+                    if (ps.Orient == PageOrientationValues.Landscape && ps.Width < ps.Height)
+                        (ps.Width!.Value, ps.Height!.Value) = (ps.Height.Value, ps.Width.Value);
+                }
+
+                sectPProps.AppendChild(sectPr);
+                sectPara.AppendChild(sectPProps);
+                parent.AppendChild(sectPara);
+
+                // Count section properties in document
+                var secCount = body.Elements<Paragraph>()
+                    .Count(p => p.ParagraphProperties?.GetFirstChild<SectionProperties>() != null);
+                resultPath = $"/section[{secCount}]";
+                newElement = sectPara;
+                break;
+            }
+
+            case "footnote":
+            {
+                if (!properties.TryGetValue("text", out var fnText))
+                    throw new ArgumentException("'text' property is required for footnote type");
+
+                if (parent is not Paragraph fnPara)
+                    throw new ArgumentException("Footnotes must be added to a paragraph: /body/p[N]");
+
+                var mainPart2 = _doc.MainDocumentPart!;
+                var fnPart = mainPart2.FootnotesPart ?? mainPart2.AddNewPart<FootnotesPart>();
+                fnPart.Footnotes ??= new Footnotes(
+                    new Footnote(new Paragraph(new Run(new Text("")))) { Type = FootnoteEndnoteValues.Separator, Id = -1 },
+                    new Footnote(new Paragraph(new Run(new Text("")))) { Type = FootnoteEndnoteValues.ContinuationSeparator, Id = 0 }
+                );
+
+                var fnId = (fnPart.Footnotes.Elements<Footnote>()
+                    .Where(f => f.Id?.Value > 0)
+                    .Select(f => f.Id!.Value)
+                    .DefaultIfEmpty(0).Max() + 1);
+
+                var footnote = new Footnote { Id = fnId };
+                var fnContentPara = new Paragraph(
+                    new ParagraphProperties(new ParagraphStyleId { Val = "FootnoteText" }),
+                    new Run(
+                        new RunProperties(new VerticalTextAlignment { Val = VerticalPositionValues.Superscript }),
+                        new FootnoteReferenceMark()),
+                    new Run(new Text(" " + fnText) { Space = SpaceProcessingModeValues.Preserve })
+                );
+                footnote.AppendChild(fnContentPara);
+                fnPart.Footnotes.AppendChild(footnote);
+                fnPart.Footnotes.Save();
+
+                // Insert reference in document body
+                var fnRefRun = new Run(
+                    new RunProperties(new RunStyle { Val = "FootnoteReference" }),
+                    new FootnoteReference { Id = fnId }
+                );
+                fnPara.AppendChild(fnRefRun);
+
+                resultPath = $"/footnote[{fnId}]";
+                newElement = fnRefRun;
+                break;
+            }
+
+            case "endnote":
+            {
+                if (!properties.TryGetValue("text", out var enText))
+                    throw new ArgumentException("'text' property is required for endnote type");
+
+                if (parent is not Paragraph enPara)
+                    throw new ArgumentException("Endnotes must be added to a paragraph: /body/p[N]");
+
+                var mainPart3 = _doc.MainDocumentPart!;
+                var enPart = mainPart3.EndnotesPart ?? mainPart3.AddNewPart<EndnotesPart>();
+                enPart.Endnotes ??= new Endnotes(
+                    new Endnote(new Paragraph(new Run(new Text("")))) { Type = FootnoteEndnoteValues.Separator, Id = -1 },
+                    new Endnote(new Paragraph(new Run(new Text("")))) { Type = FootnoteEndnoteValues.ContinuationSeparator, Id = 0 }
+                );
+
+                var enId = (enPart.Endnotes.Elements<Endnote>()
+                    .Where(e => e.Id?.Value > 0)
+                    .Select(e => e.Id!.Value)
+                    .DefaultIfEmpty(0).Max() + 1);
+
+                var endnote = new Endnote { Id = enId };
+                var enContentPara = new Paragraph(
+                    new ParagraphProperties(new ParagraphStyleId { Val = "EndnoteText" }),
+                    new Run(
+                        new RunProperties(new VerticalTextAlignment { Val = VerticalPositionValues.Superscript }),
+                        new EndnoteReferenceMark()),
+                    new Run(new Text(" " + enText) { Space = SpaceProcessingModeValues.Preserve })
+                );
+                endnote.AppendChild(enContentPara);
+                enPart.Endnotes.AppendChild(endnote);
+                enPart.Endnotes.Save();
+
+                // Insert reference in document body
+                var enRefRun = new Run(
+                    new RunProperties(new RunStyle { Val = "EndnoteReference" }),
+                    new EndnoteReference { Id = enId }
+                );
+                enPara.AppendChild(enRefRun);
+
+                resultPath = $"/endnote[{enId}]";
+                newElement = enRefRun;
+                break;
+            }
+
+            case "toc" or "tableofcontents":
+            {
+                // Table of Contents field code
+                var levels = properties.GetValueOrDefault("levels", "1-3");
+                var tocTitle = properties.GetValueOrDefault("title", "");
+                var hyperlinks = !properties.TryGetValue("hyperlinks", out var hlVal) || bool.Parse(hlVal);
+                var pageNumbers = !properties.TryGetValue("pagenumbers", out var pnVal) || bool.Parse(pnVal);
+
+                // Build field code instruction
+                var instrBuilder = new StringBuilder($" TOC \\o \"{levels}\"");
+                if (hyperlinks) instrBuilder.Append(" \\h");
+                if (!pageNumbers) instrBuilder.Append(" \\z");
+                instrBuilder.Append(" \\u ");
+
+                var tocPara = new Paragraph();
+
+                // Optional title
+                if (!string.IsNullOrEmpty(tocTitle))
+                {
+                    var titlePara = new Paragraph(
+                        new ParagraphProperties(new ParagraphStyleId { Val = "TOCHeading" }),
+                        new Run(new Text(tocTitle))
+                    );
+                    parent.AppendChild(titlePara);
+                }
+
+                // Field begin
+                tocPara.AppendChild(new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }));
+                // Field code
+                tocPara.AppendChild(new Run(new FieldCode(instrBuilder.ToString()) { Space = SpaceProcessingModeValues.Preserve }));
+                // Field separate
+                tocPara.AppendChild(new Run(new FieldChar { FieldCharType = FieldCharValues.Separate }));
+                // Placeholder text
+                tocPara.AppendChild(new Run(new Text("Update field to see table of contents") { Space = SpaceProcessingModeValues.Preserve }));
+                // Field end
+                tocPara.AppendChild(new Run(new FieldChar { FieldCharType = FieldCharValues.End }));
+
+                parent.AppendChild(tocPara);
+
+                // Add UpdateFieldsOnOpen setting
+                var settingsPart2 = _doc.MainDocumentPart!.DocumentSettingsPart
+                    ?? _doc.MainDocumentPart.AddNewPart<DocumentSettingsPart>();
+                settingsPart2.Settings ??= new Settings();
+                if (settingsPart2.Settings.GetFirstChild<UpdateFieldsOnOpen>() == null)
+                    settingsPart2.Settings.AppendChild(new UpdateFieldsOnOpen { Val = true });
+                settingsPart2.Settings.Save();
+
+                // Count TOC fields in document to determine index
+                var tocCount = body.Elements<Paragraph>()
+                    .Count(p => p.Descendants<FieldCode>().Any(fc =>
+                        fc.Text != null && fc.Text.TrimStart().StartsWith("TOC", StringComparison.OrdinalIgnoreCase)));
+                resultPath = $"/toc[{tocCount}]";
+                newElement = tocPara;
+                break;
+            }
+
+            case "style":
+            {
+                // Create a new style in the styles part
+                var stylesPart = _doc.MainDocumentPart!.StyleDefinitionsPart
+                    ?? _doc.MainDocumentPart.AddNewPart<StyleDefinitionsPart>();
+                stylesPart.Styles ??= new Styles();
+
+                var styleId = properties.GetValueOrDefault("id", properties.GetValueOrDefault("name", "CustomStyle"));
+                var styleName = properties.GetValueOrDefault("name", styleId);
+                var styleType = properties.GetValueOrDefault("type", "paragraph").ToLowerInvariant() switch
+                {
+                    "character" or "char" => StyleValues.Character,
+                    "table" => StyleValues.Table,
+                    "numbering" => StyleValues.Numbering,
+                    _ => StyleValues.Paragraph
+                };
+
+                var newStyle = new Style
+                {
+                    Type = styleType,
+                    StyleId = styleId,
+                    CustomStyle = true
+                };
+                newStyle.AppendChild(new StyleName { Val = styleName });
+
+                if (properties.TryGetValue("basedon", out var basedOn))
+                    newStyle.AppendChild(new BasedOn { Val = basedOn });
+                if (properties.TryGetValue("next", out var nextStyle))
+                    newStyle.AppendChild(new NextParagraphStyle { Val = nextStyle });
+
+                // Style paragraph properties
+                var stylePPr = new StyleParagraphProperties();
+                bool hasPPr = false;
+                if (properties.TryGetValue("alignment", out var sAlign))
+                {
+                    stylePPr.Justification = new Justification
+                    {
+                        Val = sAlign.ToLowerInvariant() switch
+                        {
+                            "center" => JustificationValues.Center,
+                            "right" => JustificationValues.Right,
+                            "justify" => JustificationValues.Both,
+                            _ => JustificationValues.Left
+                        }
+                    };
+                    hasPPr = true;
+                }
+                if (properties.TryGetValue("spacebefore", out var sSBefore))
+                {
+                    var sp = stylePPr.SpacingBetweenLines ?? (stylePPr.SpacingBetweenLines = new SpacingBetweenLines());
+                    sp.Before = sSBefore;
+                    hasPPr = true;
+                }
+                if (properties.TryGetValue("spaceafter", out var sSAfter))
+                {
+                    var sp = stylePPr.SpacingBetweenLines ?? (stylePPr.SpacingBetweenLines = new SpacingBetweenLines());
+                    sp.After = sSAfter;
+                    hasPPr = true;
+                }
+                if (hasPPr) newStyle.AppendChild(stylePPr);
+
+                // Style run properties
+                var styleRPr = new StyleRunProperties();
+                bool hasRPr = false;
+                if (properties.TryGetValue("font", out var sFont))
+                {
+                    styleRPr.RunFonts = new RunFonts { Ascii = sFont, HighAnsi = sFont, EastAsia = sFont };
+                    hasRPr = true;
+                }
+                if (properties.TryGetValue("size", out var sSize))
+                {
+                    styleRPr.FontSize = new FontSize { Val = (int.Parse(sSize) * 2).ToString() };
+                    hasRPr = true;
+                }
+                if (properties.TryGetValue("bold", out var sBold) && bool.Parse(sBold))
+                {
+                    styleRPr.Bold = new Bold();
+                    hasRPr = true;
+                }
+                if (properties.TryGetValue("italic", out var sItalic) && bool.Parse(sItalic))
+                {
+                    styleRPr.Italic = new Italic();
+                    hasRPr = true;
+                }
+                if (properties.TryGetValue("color", out var sColor))
+                {
+                    styleRPr.Color = new Color { Val = sColor.ToUpperInvariant() };
+                    hasRPr = true;
+                }
+                if (hasRPr) newStyle.AppendChild(styleRPr);
+
+                stylesPart.Styles.AppendChild(newStyle);
+                stylesPart.Styles.Save();
+
+                resultPath = $"/styles/{styleId}";
+                newElement = newStyle;
                 break;
             }
 
@@ -699,6 +1113,32 @@ public partial class WordHandler
                     break;
                 case "marginright":
                     EnsurePageMargin().Right = uint.Parse(value);
+                    break;
+
+                // Core document properties
+                case "title":
+                    _doc.PackageProperties.Title = value;
+                    break;
+                case "author" or "creator":
+                    _doc.PackageProperties.Creator = value;
+                    break;
+                case "subject":
+                    _doc.PackageProperties.Subject = value;
+                    break;
+                case "keywords":
+                    _doc.PackageProperties.Keywords = value;
+                    break;
+                case "description":
+                    _doc.PackageProperties.Description = value;
+                    break;
+                case "category":
+                    _doc.PackageProperties.Category = value;
+                    break;
+                case "lastmodifiedby":
+                    _doc.PackageProperties.LastModifiedBy = value;
+                    break;
+                case "revision":
+                    _doc.PackageProperties.Revision = value;
                     break;
             }
         }

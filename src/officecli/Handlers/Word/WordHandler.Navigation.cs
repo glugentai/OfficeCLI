@@ -70,6 +70,19 @@ public partial class WordHandler
             children.Add(new DocumentNode { Path = "/numbering", Type = "numbering" });
         }
 
+        // Core document properties
+        var props = _doc.PackageProperties;
+        if (props.Title != null) node.Format["title"] = props.Title;
+        if (props.Creator != null) node.Format["author"] = props.Creator;
+        if (props.Subject != null) node.Format["subject"] = props.Subject;
+        if (props.Keywords != null) node.Format["keywords"] = props.Keywords;
+        if (props.Description != null) node.Format["description"] = props.Description;
+        if (props.Category != null) node.Format["category"] = props.Category;
+        if (props.LastModifiedBy != null) node.Format["lastModifiedBy"] = props.LastModifiedBy;
+        if (props.Revision != null) node.Format["revision"] = props.Revision;
+        if (props.Created != null) node.Format["created"] = props.Created.Value.ToString("o");
+        if (props.Modified != null) node.Format["modified"] = props.Modified.Value.ToString("o");
+
         node.Children = children;
         node.ChildCount = children.Count;
         return node;
@@ -170,6 +183,20 @@ public partial class WordHandler
                     node.Format["alignment"] = pProps.Justification.Val.Value.ToString();
                 if (pProps.Indentation?.FirstLine?.Value != null)
                     node.Format["firstLineIndent"] = pProps.Indentation.FirstLine.Value;
+                if (pProps.Indentation?.Left?.Value != null)
+                    node.Format["leftIndent"] = pProps.Indentation.Left.Value;
+                if (pProps.Indentation?.Right?.Value != null)
+                    node.Format["rightIndent"] = pProps.Indentation.Right.Value;
+                if (pProps.Indentation?.Hanging?.Value != null)
+                    node.Format["hangingIndent"] = pProps.Indentation.Hanging.Value;
+                if (pProps.KeepNext != null)
+                    node.Format["keepNext"] = true;
+                if (pProps.KeepLines != null)
+                    node.Format["keepLines"] = true;
+                if (pProps.PageBreakBefore != null)
+                    node.Format["pageBreakBefore"] = true;
+                if (pProps.WidowControl != null)
+                    node.Format["widowControl"] = true;
 
                 var numProps = pProps.NumberingProperties;
                 if (numProps != null)
@@ -210,6 +237,10 @@ public partial class WordHandler
             if (size != null) node.Format["size"] = size;
             if (run.RunProperties?.Bold != null) node.Format["bold"] = true;
             if (run.RunProperties?.Italic != null) node.Format["italic"] = true;
+            if (run.RunProperties?.VerticalTextAlignment?.Val?.Value == VerticalPositionValues.Superscript)
+                node.Format["superscript"] = true;
+            if (run.RunProperties?.VerticalTextAlignment?.Val?.Value == VerticalPositionValues.Subscript)
+                node.Format["subscript"] = true;
         }
         else if (element is Hyperlink hyperlink)
         {

@@ -6,6 +6,9 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeCli.Core;
+using C = DocumentFormat.OpenXml.Drawing.Charts;
+using Drawing = DocumentFormat.OpenXml.Drawing;
+using XDR = DocumentFormat.OpenXml.Drawing.Spreadsheet;
 
 namespace OfficeCli.Handlers;
 
@@ -122,6 +125,37 @@ public partial class ExcelHandler
                 GetSheet(cellWorksheet).Save();
                 return $"/{cellSheetName}/{cellRef}";
 
+            case "autofilter":
+            {
+                var afSegments = parentPath.TrimStart('/').Split('/', 2);
+                var afSheetName = afSegments[0];
+                var afWorksheet = FindWorksheet(afSheetName)
+                    ?? throw new ArgumentException($"Sheet not found: {afSheetName}");
+
+                var afRange = properties.GetValueOrDefault("range")
+                    ?? throw new ArgumentException("AutoFilter requires 'range' property (e.g. range=A1:F100)");
+
+                var wsElement = GetSheet(afWorksheet);
+                var autoFilter = wsElement.GetFirstChild<AutoFilter>();
+                if (autoFilter == null)
+                {
+                    autoFilter = new AutoFilter();
+                    // AutoFilter goes after SheetData (after MergeCells if present)
+                    var mergeCellsEl = wsElement.GetFirstChild<MergeCells>();
+                    var sheetDataEl = wsElement.GetFirstChild<SheetData>();
+                    if (mergeCellsEl != null)
+                        mergeCellsEl.InsertAfterSelf(autoFilter);
+                    else if (sheetDataEl != null)
+                        sheetDataEl.InsertAfterSelf(autoFilter);
+                    else
+                        wsElement.AppendChild(autoFilter);
+                }
+                autoFilter.Reference = afRange.ToUpperInvariant();
+
+                GetSheet(afWorksheet).Save();
+                return $"/{afSheetName}/autofilter";
+            }
+
             case "databar":
             case "conditionalformatting":
             {
@@ -170,7 +204,302 @@ public partial class ExcelHandler
                     wsElement.Append(cf);
 
                 GetSheet(cfWorksheet).Save();
-                return $"/{cfSheetName}/conditionalFormatting[{sqref}]";
+                var dbCfCount = wsElement.Elements<ConditionalFormatting>().Count();
+                return $"/{cfSheetName}/cf[{dbCfCount}]";
+            }
+
+            case "colorscale":
+            {
+                var csSegments = parentPath.TrimStart('/').Split('/', 2);
+                var csSheetName = csSegments[0];
+                var csWorksheet = FindWorksheet(csSheetName)
+                    ?? throw new ArgumentException($"Sheet not found: {csSheetName}");
+
+                var csSqref = properties.GetValueOrDefault("sqref", "A1:A10");
+                var minColor = properties.GetValueOrDefault("mincolor", "F8696B");
+                var maxColor = properties.GetValueOrDefault("maxcolor", "63BE7B");
+                var midColor = properties.GetValueOrDefault("midcolor");
+
+                var normalizedMinColor = (minColor.Length == 6 ? "FF" : "") + minColor.ToUpperInvariant();
+                var normalizedMaxColor = (maxColor.Length == 6 ? "FF" : "") + maxColor.ToUpperInvariant();
+
+                var colorScale = new ColorScale();
+                colorScale.Append(new ConditionalFormatValueObject { Type = ConditionalFormatValueObjectValues.Min });
+                if (midColor != null)
+                    colorScale.Append(new ConditionalFormatValueObject { Type = ConditionalFormatValueObjectValues.Percentile, Val = "50" });
+                colorScale.Append(new ConditionalFormatValueObject { Type = ConditionalFormatValueObjectValues.Max });
+                colorScale.Append(new DocumentFormat.OpenXml.Spreadsheet.Color { Rgb = normalizedMinColor });
+                if (midColor != null)
+                {
+                    var normalizedMidColor = (midColor.Length == 6 ? "FF" : "") + midColor.ToUpperInvariant();
+                    colorScale.Append(new DocumentFormat.OpenXml.Spreadsheet.Color { Rgb = normalizedMidColor });
+                }
+                colorScale.Append(new DocumentFormat.OpenXml.Spreadsheet.Color { Rgb = normalizedMaxColor });
+
+                var csRule = new ConditionalFormattingRule
+                {
+                    Type = ConditionalFormatValues.ColorScale,
+                    Priority = 1
+                };
+                csRule.Append(colorScale);
+
+                var csCf = new ConditionalFormatting(csRule)
+                {
+                    SequenceOfReferences = new ListValue<StringValue>(
+                        csSqref.Split(' ').Select(s => new StringValue(s)))
+                };
+
+                var csWsElement = GetSheet(csWorksheet);
+                var csSheetDataEl = csWsElement.GetFirstChild<SheetData>();
+                if (csSheetDataEl != null)
+                    csSheetDataEl.InsertAfterSelf(csCf);
+                else
+                    csWsElement.Append(csCf);
+
+                GetSheet(csWorksheet).Save();
+                var csCfCount = csWsElement.Elements<ConditionalFormatting>().Count();
+                return $"/{csSheetName}/cf[{csCfCount}]";
+            }
+
+            case "iconset":
+            {
+                var isSegments = parentPath.TrimStart('/').Split('/', 2);
+                var isSheetName = isSegments[0];
+                var isWorksheet = FindWorksheet(isSheetName)
+                    ?? throw new ArgumentException($"Sheet not found: {isSheetName}");
+
+                var isSqref = properties.GetValueOrDefault("sqref", "A1:A10");
+                var iconSetName = properties.GetValueOrDefault("iconset", "3TrafficLights1");
+                var reverse = properties.TryGetValue("reverse", out var revVal) && IsTruthy(revVal);
+                var showValue = !properties.TryGetValue("showvalue", out var svVal) || IsTruthy(svVal);
+
+                var iconSetVal = ParseIconSetValues(iconSetName);
+
+                var iconSet = new IconSet { IconSetValue = iconSetVal };
+                if (reverse) iconSet.Reverse = true;
+                if (!showValue) iconSet.ShowValue = false;
+
+                // Add threshold values based on icon count
+                var iconCount = GetIconCount(iconSetName);
+                for (int i = 0; i < iconCount; i++)
+                {
+                    if (i == 0)
+                        iconSet.Append(new ConditionalFormatValueObject
+                        {
+                            Type = ConditionalFormatValueObjectValues.Percent,
+                            Val = "0"
+                        });
+                    else
+                        iconSet.Append(new ConditionalFormatValueObject
+                        {
+                            Type = ConditionalFormatValueObjectValues.Percent,
+                            Val = (i * 100 / iconCount).ToString()
+                        });
+                }
+
+                var isRule = new ConditionalFormattingRule
+                {
+                    Type = ConditionalFormatValues.IconSet,
+                    Priority = 1
+                };
+                isRule.Append(iconSet);
+
+                var isCf = new ConditionalFormatting(isRule)
+                {
+                    SequenceOfReferences = new ListValue<StringValue>(
+                        isSqref.Split(' ').Select(s => new StringValue(s)))
+                };
+
+                var isWsElement = GetSheet(isWorksheet);
+                var isSheetDataEl = isWsElement.GetFirstChild<SheetData>();
+                if (isSheetDataEl != null)
+                    isSheetDataEl.InsertAfterSelf(isCf);
+                else
+                    isWsElement.Append(isCf);
+
+                GetSheet(isWorksheet).Save();
+                var isCfCount = isWsElement.Elements<ConditionalFormatting>().Count();
+                return $"/{isSheetName}/cf[{isCfCount}]";
+            }
+
+            case "formulacf":
+            {
+                var fcfSegments = parentPath.TrimStart('/').Split('/', 2);
+                var fcfSheetName = fcfSegments[0];
+                var fcfWorksheet = FindWorksheet(fcfSheetName)
+                    ?? throw new ArgumentException($"Sheet not found: {fcfSheetName}");
+
+                var fcfSqref = properties.GetValueOrDefault("sqref", "A1:A10");
+                var fcfFormula = properties.GetValueOrDefault("formula")
+                    ?? throw new ArgumentException("Formula-based conditional formatting requires 'formula' property (e.g. formula=$A1>100)");
+
+                // Build DifferentialFormat (dxf) for the formatting
+                var dxf = new DifferentialFormat();
+                if (properties.TryGetValue("font.color", out var fontColor))
+                {
+                    var normalizedFontColor = (fontColor.Length == 6 ? "FF" : "") + fontColor.ToUpperInvariant();
+                    dxf.Append(new Font(new DocumentFormat.OpenXml.Spreadsheet.Color { Rgb = normalizedFontColor }));
+                }
+                else if (properties.TryGetValue("font.bold", out var fontBold) && IsTruthy(fontBold))
+                {
+                    dxf.Append(new Font(new Bold()));
+                }
+
+                if (properties.TryGetValue("fill", out var fillColor))
+                {
+                    var normalizedFillColor = (fillColor.Length == 6 ? "FF" : "") + fillColor.ToUpperInvariant();
+                    dxf.Append(new Fill(new PatternFill(
+                        new BackgroundColor { Rgb = normalizedFillColor })
+                    { PatternType = PatternValues.Solid }));
+                }
+
+                // Handle font.bold when font.color is also set
+                if (properties.TryGetValue("font.color", out _) && properties.TryGetValue("font.bold", out var fb2) && IsTruthy(fb2))
+                {
+                    var existingFont = dxf.GetFirstChild<Font>();
+                    existingFont?.Append(new Bold());
+                }
+
+                // Add dxf to stylesheet (ensure it exists)
+                var fcfWbPart = _doc.WorkbookPart
+                    ?? throw new InvalidOperationException("Workbook not found");
+                var fcfStyleMgr = new ExcelStyleManager(fcfWbPart);
+                fcfStyleMgr.EnsureStylesPart();
+                var stylesheet = fcfWbPart.WorkbookStylesPart!.Stylesheet!;
+
+                var dxfs = stylesheet.GetFirstChild<DifferentialFormats>();
+                if (dxfs == null)
+                {
+                    dxfs = new DifferentialFormats { Count = 0 };
+                    stylesheet.Append(dxfs);
+                }
+                dxfs.Append(dxf);
+                dxfs.Count = (uint)dxfs.Elements<DifferentialFormat>().Count();
+                stylesheet.Save();
+
+                var dxfId = dxfs.Count!.Value - 1;
+
+                var fcfRule = new ConditionalFormattingRule
+                {
+                    Type = ConditionalFormatValues.Expression,
+                    Priority = 1,
+                    FormatId = dxfId
+                };
+                fcfRule.Append(new Formula(fcfFormula));
+
+                var fcfCf = new ConditionalFormatting(fcfRule)
+                {
+                    SequenceOfReferences = new ListValue<StringValue>(
+                        fcfSqref.Split(' ').Select(s => new StringValue(s)))
+                };
+
+                var fcfWsElement = GetSheet(fcfWorksheet);
+                var fcfSheetDataEl = fcfWsElement.GetFirstChild<SheetData>();
+                if (fcfSheetDataEl != null)
+                    fcfSheetDataEl.InsertAfterSelf(fcfCf);
+                else
+                    fcfWsElement.Append(fcfCf);
+
+                GetSheet(fcfWorksheet).Save();
+                var fcfCfCount = fcfWsElement.Elements<ConditionalFormatting>().Count();
+                return $"/{fcfSheetName}/cf[{fcfCfCount}]";
+            }
+
+            case "chart":
+            {
+                var chartSegments = parentPath.TrimStart('/').Split('/', 2);
+                var chartSheetName = chartSegments[0];
+                var chartWorksheet = FindWorksheet(chartSheetName)
+                    ?? throw new ArgumentException($"Sheet not found: {chartSheetName}");
+
+                // Parse chart data
+                var chartType = properties.FirstOrDefault(kv =>
+                    kv.Key.Equals("charttype", StringComparison.OrdinalIgnoreCase)
+                    || kv.Key.Equals("type", StringComparison.OrdinalIgnoreCase)).Value
+                    ?? "column";
+                var chartTitle = properties.GetValueOrDefault("title");
+                var categories = ExcelChartParseCategories(properties);
+                var seriesData = ExcelChartParseSeriesData(properties);
+
+                if (seriesData.Count == 0)
+                    throw new ArgumentException("Chart requires data. Use: data=\"Series1:1,2,3;Series2:4,5,6\" " +
+                        "or series1=\"Revenue:100,200,300\"");
+
+                // Create DrawingsPart if needed
+                var drawingsPart = chartWorksheet.DrawingsPart
+                    ?? chartWorksheet.AddNewPart<DrawingsPart>();
+
+                if (drawingsPart.WorksheetDrawing == null)
+                {
+                    drawingsPart.WorksheetDrawing = new XDR.WorksheetDrawing();
+                    drawingsPart.WorksheetDrawing.Save();
+
+                    if (GetSheet(chartWorksheet).GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Drawing>() == null)
+                    {
+                        var drawingRelId = chartWorksheet.GetIdOfPart(drawingsPart);
+                        GetSheet(chartWorksheet).Append(
+                            new DocumentFormat.OpenXml.Spreadsheet.Drawing { Id = drawingRelId });
+                        GetSheet(chartWorksheet).Save();
+                    }
+                }
+
+                // Create ChartPart and build chart
+                var chartPart = drawingsPart.AddNewPart<ChartPart>();
+                chartPart.ChartSpace = ExcelChartBuildChartSpace(chartType, chartTitle, categories, seriesData, properties);
+                chartPart.ChartSpace.Save();
+
+                // Position via TwoCellAnchor
+                var fromCol = properties.TryGetValue("x", out var xStr) ? int.Parse(xStr) : 0;
+                var fromRow = properties.TryGetValue("y", out var yStr) ? int.Parse(yStr) : 0;
+                var toCol = properties.TryGetValue("width", out var wStr) ? fromCol + int.Parse(wStr) : fromCol + 8;
+                var toRow = properties.TryGetValue("height", out var hStr) ? fromRow + int.Parse(hStr) : fromRow + 15;
+
+                var anchor = new XDR.TwoCellAnchor();
+                anchor.Append(new XDR.FromMarker(
+                    new XDR.ColumnId(fromCol.ToString()),
+                    new XDR.ColumnOffset("0"),
+                    new XDR.RowId(fromRow.ToString()),
+                    new XDR.RowOffset("0")));
+                anchor.Append(new XDR.ToMarker(
+                    new XDR.ColumnId(toCol.ToString()),
+                    new XDR.ColumnOffset("0"),
+                    new XDR.RowId(toRow.ToString()),
+                    new XDR.RowOffset("0")));
+
+                var chartRelId = drawingsPart.GetIdOfPart(chartPart);
+                var graphicFrame = new XDR.GraphicFrame();
+                graphicFrame.NonVisualGraphicFrameProperties = new XDR.NonVisualGraphicFrameProperties(
+                    new XDR.NonVisualDrawingProperties
+                    {
+                        Id = (uint)(drawingsPart.WorksheetDrawing.ChildElements.Count + 2),
+                        Name = chartTitle ?? "Chart"
+                    },
+                    new XDR.NonVisualGraphicFrameDrawingProperties()
+                );
+                graphicFrame.Transform = new XDR.Transform(
+                    new Drawing.Offset { X = 0, Y = 0 },
+                    new Drawing.Extents { Cx = 0, Cy = 0 }
+                );
+
+                var chartRef = new C.ChartReference { Id = chartRelId };
+                graphicFrame.Append(new Drawing.Graphic(
+                    new Drawing.GraphicData(chartRef)
+                    {
+                        Uri = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+                    }
+                ));
+
+                anchor.Append(graphicFrame);
+                anchor.Append(new XDR.ClientData());
+                drawingsPart.WorksheetDrawing.Append(anchor);
+                drawingsPart.WorksheetDrawing.Save();
+
+                // Legend
+                var legendVal = properties.GetValueOrDefault("legend", "true");
+                // Legend is already handled inside ExcelChartBuildChartSpace
+
+                var chartIdx = drawingsPart.ChartParts.ToList().IndexOf(chartPart) + 1;
+                return $"/{chartSheetName}/chart[{chartIdx}]";
             }
 
             default:
