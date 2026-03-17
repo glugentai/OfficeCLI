@@ -304,4 +304,329 @@ public class ExcelFunctionalTests : IDisposable
         node.Format.Should().ContainKey("link");
         ((string)node.Format["link"]).Should().StartWith("https://persist.com");
     }
+
+    // ==================== Border Lifecycle ====================
+
+    [Fact]
+    public void Border_FullLifecycle()
+    {
+        // 1. Add cell
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "Bordered" });
+
+        // 2. Set border
+        _handler.Set("/Sheet1/A1", new() { ["border.all"] = "thin", ["border.color"] = "000000" });
+
+        // 3. Get + Verify borders readable
+        var node = _handler.Get("/Sheet1/A1");
+        node.Text.Should().Be("Bordered");
+        node.Format.Should().ContainKey("border.left");
+        ((string)node.Format["border.left"]).Should().Be("thin");
+
+        // 4. Set (modify border)
+        _handler.Set("/Sheet1/A1", new() { ["border.bottom"] = "thick" });
+
+        // 5. Get + Verify modification
+        node = _handler.Get("/Sheet1/A1");
+        ((string)node.Format["border.bottom"]).Should().Be("thick");
+
+        // 6. Persistence
+        Reopen();
+        node = _handler.Get("/Sheet1/A1");
+        node.Text.Should().Be("Bordered");
+        node.Format.Should().ContainKey("border.left");
+    }
+
+    // ==================== Merge Cells Lifecycle ====================
+
+    [Fact]
+    public void MergeCells_FullLifecycle()
+    {
+        // 1. Add cells
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "Merged" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "B1", ["value"] = "" });
+
+        // 2. Merge
+        _handler.Set("/Sheet1/A1:D1", new() { ["merge"] = "true" });
+
+        // 3. Get + Verify merge info
+        var cell = _handler.Get("/Sheet1/A1");
+        cell.Format.Should().ContainKey("merge");
+        ((string)cell.Format["merge"]).Should().Be("A1:D1");
+
+        // 4. Persistence
+        Reopen();
+        cell = _handler.Get("/Sheet1/A1");
+        cell.Format.Should().ContainKey("merge");
+
+        // 5. Unmerge
+        _handler.Set("/Sheet1/A1:D1", new() { ["merge"] = "false" });
+        cell = _handler.Get("/Sheet1/A1");
+        cell.Format.Should().NotContainKey("merge");
+    }
+
+    // ==================== Column Width Lifecycle ====================
+
+    [Fact]
+    public void ColumnWidth_FullLifecycle()
+    {
+        // 1. Add data
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "Wide column" });
+
+        // 2. Set column width
+        _handler.Set("/Sheet1/col[A]", new() { ["width"] = "25" });
+
+        // 3. Get + Verify
+        var col = _handler.Get("/Sheet1/col[A]");
+        col.Type.Should().Be("column");
+        ((double)col.Format["width"]).Should().Be(25);
+
+        // 4. Set (modify)
+        _handler.Set("/Sheet1/col[A]", new() { ["width"] = "30" });
+
+        // 5. Get + Verify
+        col = _handler.Get("/Sheet1/col[A]");
+        ((double)col.Format["width"]).Should().Be(30);
+
+        // 6. Persistence
+        Reopen();
+        col = _handler.Get("/Sheet1/col[A]");
+        ((double)col.Format["width"]).Should().Be(30);
+    }
+
+    // ==================== Row Height Lifecycle ====================
+
+    [Fact]
+    public void RowHeight_FullLifecycle()
+    {
+        // 1. Add data
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "Tall row" });
+
+        // 2. Set row height
+        _handler.Set("/Sheet1/row[1]", new() { ["height"] = "30" });
+
+        // 3. Get + Verify
+        var row = _handler.Get("/Sheet1/row[1]");
+        row.Type.Should().Be("row");
+        ((double)row.Format["height"]).Should().Be(30);
+
+        // 4. Set (modify)
+        _handler.Set("/Sheet1/row[1]", new() { ["height"] = "40" });
+
+        // 5. Get + Verify
+        row = _handler.Get("/Sheet1/row[1]");
+        ((double)row.Format["height"]).Should().Be(40);
+
+        // 6. Persistence
+        Reopen();
+        row = _handler.Get("/Sheet1/row[1]");
+        ((double)row.Format["height"]).Should().Be(40);
+    }
+
+    // ==================== Freeze Panes Lifecycle ====================
+
+    [Fact]
+    public void FreezePanes_FullLifecycle()
+    {
+        // 1. Add data
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "Header" });
+
+        // 2. Set freeze (freeze row 1)
+        _handler.Set("/Sheet1", new() { ["freeze"] = "A2" });
+
+        // 3. Get + Verify
+        var sheet = _handler.Get("/Sheet1");
+        sheet.Format.Should().ContainKey("freeze");
+        ((string)sheet.Format["freeze"]).Should().Be("A2");
+
+        // 4. Set (modify freeze)
+        _handler.Set("/Sheet1", new() { ["freeze"] = "B3" });
+        sheet = _handler.Get("/Sheet1");
+        ((string)sheet.Format["freeze"]).Should().Be("B3");
+
+        // 5. Persistence
+        Reopen();
+        sheet = _handler.Get("/Sheet1");
+        ((string)sheet.Format["freeze"]).Should().Be("B3");
+    }
+
+    // ==================== AutoFilter Lifecycle ====================
+
+    [Fact]
+    public void AutoFilter_FullLifecycle()
+    {
+        // 1. Add data
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "Name" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "B1", ["value"] = "Score" });
+
+        // 2. Add autofilter
+        _handler.Add("/Sheet1", "autofilter", null, new() { ["range"] = "A1:B10" });
+
+        // 3. Get + Verify
+        var sheet = _handler.Get("/Sheet1");
+        sheet.Format.Should().ContainKey("autofilter");
+        ((string)sheet.Format["autofilter"]).Should().Be("A1:B10");
+
+        // 4. Set (modify range)
+        _handler.Set("/Sheet1/autofilter", new() { ["range"] = "A1:B20" });
+        sheet = _handler.Get("/Sheet1");
+        ((string)sheet.Format["autofilter"]).Should().Be("A1:B20");
+
+        // 5. Persistence
+        Reopen();
+        sheet = _handler.Get("/Sheet1");
+        ((string)sheet.Format["autofilter"]).Should().Be("A1:B20");
+    }
+
+    // ==================== ColorScale Lifecycle ====================
+
+    [Fact]
+    public void ColorScale_FullLifecycle()
+    {
+        // 1. Add data
+        for (int i = 1; i <= 5; i++)
+            _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = $"A{i}", ["value"] = $"{i * 20}" });
+
+        // 2. Add colorscale
+        var path = _handler.Add("/Sheet1", "colorscale", null, new()
+        {
+            ["sqref"] = "A1:A5", ["mincolor"] = "F8696B", ["maxcolor"] = "63BE7B"
+        });
+        path.Should().Be("/Sheet1/cf[1]");
+
+        // 3. Get + Verify
+        var cf = _handler.Get("/Sheet1/cf[1]");
+        cf.Type.Should().Be("conditionalFormatting");
+        ((string)cf.Format["cfType"]).Should().Be("colorScale");
+        ((string)cf.Format["sqref"]).Should().Be("A1:A5");
+        ((string)cf.Format["mincolor"]).Should().Contain("F8696B");
+        ((string)cf.Format["maxcolor"]).Should().Contain("63BE7B");
+
+        // 4. Set (modify colors)
+        _handler.Set("/Sheet1/cf[1]", new() { ["mincolor"] = "0000FF", ["maxcolor"] = "FF0000" });
+
+        // 5. Get + Verify
+        cf = _handler.Get("/Sheet1/cf[1]");
+        ((string)cf.Format["mincolor"]).Should().Contain("0000FF");
+        ((string)cf.Format["maxcolor"]).Should().Contain("FF0000");
+
+        // 6. Persistence
+        Reopen();
+        cf = _handler.Get("/Sheet1/cf[1]");
+        ((string)cf.Format["cfType"]).Should().Be("colorScale");
+        ((string)cf.Format["mincolor"]).Should().Contain("0000FF");
+    }
+
+    // ==================== IconSet Lifecycle ====================
+
+    [Fact]
+    public void IconSet_FullLifecycle()
+    {
+        // 1. Add data
+        for (int i = 1; i <= 5; i++)
+            _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = $"A{i}", ["value"] = $"{i * 20}" });
+
+        // 2. Add iconset
+        var path = _handler.Add("/Sheet1", "iconset", null, new()
+        {
+            ["sqref"] = "A1:A5", ["iconset"] = "3Arrows"
+        });
+        path.Should().Be("/Sheet1/cf[1]");
+
+        // 3. Get + Verify
+        var cf = _handler.Get("/Sheet1/cf[1]");
+        cf.Type.Should().Be("conditionalFormatting");
+        ((string)cf.Format["cfType"]).Should().Be("iconSet");
+        ((string)cf.Format["iconset"]).Should().Be("3Arrows");
+
+        // 4. Set (modify)
+        _handler.Set("/Sheet1/cf[1]", new() { ["iconset"] = "3TrafficLights1", ["reverse"] = "true" });
+
+        // 5. Get + Verify
+        cf = _handler.Get("/Sheet1/cf[1]");
+        ((string)cf.Format["iconset"]).Should().Be("3TrafficLights1");
+        ((bool)cf.Format["reverse"]).Should().BeTrue();
+
+        // 6. Persistence
+        Reopen();
+        cf = _handler.Get("/Sheet1/cf[1]");
+        ((string)cf.Format["cfType"]).Should().Be("iconSet");
+        ((string)cf.Format["iconset"]).Should().Be("3TrafficLights1");
+    }
+
+    // ==================== Formula CF Lifecycle ====================
+
+    [Fact]
+    public void FormulaCF_FullLifecycle()
+    {
+        // 1. Add data
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "200" });
+
+        // 2. Add formula CF
+        var path = _handler.Add("/Sheet1", "formulacf", null, new()
+        {
+            ["sqref"] = "A1:A10", ["formula"] = "$A1>100", ["fill"] = "FF0000"
+        });
+        path.Should().Be("/Sheet1/cf[1]");
+
+        // 3. Get + Verify
+        var cf = _handler.Get("/Sheet1/cf[1]");
+        cf.Type.Should().Be("conditionalFormatting");
+        ((string)cf.Format["cfType"]).Should().Be("formula");
+        ((string)cf.Format["formula"]).Should().Be("$A1>100");
+        ((string)cf.Format["sqref"]).Should().Be("A1:A10");
+
+        // 4. Set (modify range)
+        _handler.Set("/Sheet1/cf[1]", new() { ["sqref"] = "A1:A20" });
+
+        // 5. Get + Verify
+        cf = _handler.Get("/Sheet1/cf[1]");
+        ((string)cf.Format["sqref"]).Should().Be("A1:A20");
+
+        // 6. Persistence
+        Reopen();
+        cf = _handler.Get("/Sheet1/cf[1]");
+        ((string)cf.Format["cfType"]).Should().Be("formula");
+        ((string)cf.Format["sqref"]).Should().Be("A1:A20");
+    }
+
+    // ==================== Chart Lifecycle ====================
+
+    [Fact]
+    public void Chart_FullLifecycle()
+    {
+        // 1. Add data
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "Q1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A2", ["value"] = "Q2" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "B1", ["value"] = "100" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "B2", ["value"] = "200" });
+
+        // 2. Add chart
+        var path = _handler.Add("/Sheet1", "chart", null, new()
+        {
+            ["chartType"] = "column",
+            ["title"] = "Sales",
+            ["categories"] = "Q1,Q2",
+            ["data"] = "Revenue:100,200"
+        });
+        path.Should().Be("/Sheet1/chart[1]");
+
+        // 3. Get + Verify
+        var chart = _handler.Get("/Sheet1/chart[1]");
+        chart.Type.Should().Be("chart");
+        ((string)chart.Format["title"]).Should().Be("Sales");
+        ((string)chart.Format["chartType"]).Should().Contain("Chart");
+
+        // 4. Set (modify title)
+        _handler.Set("/Sheet1/chart[1]", new() { ["title"] = "Updated Sales" });
+
+        // 5. Get + Verify
+        chart = _handler.Get("/Sheet1/chart[1]");
+        ((string)chart.Format["title"]).Should().Be("Updated Sales");
+
+        // 6. Persistence
+        Reopen();
+        chart = _handler.Get("/Sheet1/chart[1]");
+        chart.Type.Should().Be("chart");
+        ((string)chart.Format["title"]).Should().Be("Updated Sales");
+    }
 }

@@ -21,6 +21,14 @@ namespace OfficeCli.Core;
 ///   font.size       - point size (e.g. "11")
 ///   font.name       - font family name (e.g. "Calibri")
 ///   fill            - hex RGB background color (e.g. "4472C4")
+///   border.all           - shorthand for all four sides (thin/medium/thick/double/dashed/dotted/none)
+///   border.left/right/top/bottom - individual side style
+///   border.color         - hex RGB color for all borders
+///   border.left.color, border.right.color, etc. - per-side color
+///   border.diagonal      - diagonal border style
+///   border.diagonal.color - diagonal border color
+///   border.diagonalUp    - true/false
+///   border.diagonalDown  - true/false
 ///   alignment.horizontal - left/center/right
 ///   alignment.vertical   - top/center/bottom
 ///   alignment.wrapText   - true/false
@@ -108,8 +116,17 @@ public class ExcelStyleManager
             applyFill = true;
         }
 
-        // --- border (keep existing) ---
+        // --- border ---
         uint borderId = baseXf.BorderId?.Value ?? 0;
+        bool applyBorder = baseXf.ApplyBorder?.Value ?? false;
+        var borderProps = styleProps
+            .Where(kv => kv.Key.StartsWith("border.", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(kv => kv.Key[7..].ToLowerInvariant(), kv => kv.Value);
+        if (borderProps.Count > 0)
+        {
+            borderId = GetOrCreateBorder(stylesheet, borderId, borderProps);
+            applyBorder = true;
+        }
 
         // --- alignment ---
         Alignment? alignment = baseXf.Alignment?.CloneNode(true) as Alignment;
@@ -141,7 +158,7 @@ public class ExcelStyleManager
         // --- find or create CellFormat ---
         uint xfIndex = FindOrCreateCellFormat(cellFormats,
             numFmtId, fontId, fillId, borderId, alignment,
-            applyNumFmt, applyFont, applyFill, applyAlignment);
+            applyNumFmt, applyFont, applyFill, applyBorder, applyAlignment);
 
         stylesheet.Save();
         return xfIndex;
@@ -336,11 +353,173 @@ public class ExcelStyleManager
         return (uint)(fills.Elements<Fill>().Count() - 1);
     }
 
+    // ==================== Border ====================
+
+    private static uint GetOrCreateBorder(Stylesheet stylesheet, uint baseBorderId, Dictionary<string, string> borderProps)
+    {
+        var borders = stylesheet.Borders;
+        if (borders == null)
+        {
+            borders = new Borders(
+                new Border(new LeftBorder(), new RightBorder(), new TopBorder(), new BottomBorder(), new DiagonalBorder())
+            ) { Count = 1 };
+            var fills = stylesheet.Fills;
+            if (fills != null)
+                fills.InsertAfterSelf(borders);
+            else
+                stylesheet.Append(borders);
+        }
+
+        // Get base border to merge with
+        var baseBorder = baseBorderId < (uint)borders.Elements<Border>().Count()
+            ? borders.Elements<Border>().ElementAt((int)baseBorderId)
+            : borders.Elements<Border>().First();
+
+        // Resolve styles: start from base, override with new props
+        var leftStyle = baseBorder.LeftBorder?.Style?.Value ?? BorderStyleValues.None;
+        var rightStyle = baseBorder.RightBorder?.Style?.Value ?? BorderStyleValues.None;
+        var topStyle = baseBorder.TopBorder?.Style?.Value ?? BorderStyleValues.None;
+        var bottomStyle = baseBorder.BottomBorder?.Style?.Value ?? BorderStyleValues.None;
+        var diagonalStyle = baseBorder.DiagonalBorder?.Style?.Value ?? BorderStyleValues.None;
+
+        string? leftColor = baseBorder.LeftBorder?.Color?.Rgb?.Value;
+        string? rightColor = baseBorder.RightBorder?.Color?.Rgb?.Value;
+        string? topColor = baseBorder.TopBorder?.Color?.Rgb?.Value;
+        string? bottomColor = baseBorder.BottomBorder?.Color?.Rgb?.Value;
+        string? diagonalColor = baseBorder.DiagonalBorder?.Color?.Rgb?.Value;
+
+        bool diagonalUp = baseBorder.DiagonalUp?.Value ?? false;
+        bool diagonalDown = baseBorder.DiagonalDown?.Value ?? false;
+
+        // Apply "all" shorthand first (individual sides override later)
+        if (borderProps.TryGetValue("all", out var allStyle))
+        {
+            var parsed = ParseBorderStyle(allStyle);
+            leftStyle = rightStyle = topStyle = bottomStyle = parsed;
+        }
+
+        // Apply "color" shorthand
+        if (borderProps.TryGetValue("color", out var allColor))
+        {
+            var normalized = NormalizeColor(allColor);
+            leftColor = rightColor = topColor = bottomColor = normalized;
+        }
+
+        // Apply individual side styles
+        if (borderProps.TryGetValue("left", out var lVal)) leftStyle = ParseBorderStyle(lVal);
+        if (borderProps.TryGetValue("right", out var rVal)) rightStyle = ParseBorderStyle(rVal);
+        if (borderProps.TryGetValue("top", out var tVal)) topStyle = ParseBorderStyle(tVal);
+        if (borderProps.TryGetValue("bottom", out var bVal)) bottomStyle = ParseBorderStyle(bVal);
+        if (borderProps.TryGetValue("diagonal", out var dVal)) diagonalStyle = ParseBorderStyle(dVal);
+
+        // Apply individual side colors
+        if (borderProps.TryGetValue("left.color", out var lcVal)) leftColor = NormalizeColor(lcVal);
+        if (borderProps.TryGetValue("right.color", out var rcVal)) rightColor = NormalizeColor(rcVal);
+        if (borderProps.TryGetValue("top.color", out var tcVal)) topColor = NormalizeColor(tcVal);
+        if (borderProps.TryGetValue("bottom.color", out var bcVal)) bottomColor = NormalizeColor(bcVal);
+        if (borderProps.TryGetValue("diagonal.color", out var dcVal)) diagonalColor = NormalizeColor(dcVal);
+
+        // Diagonal direction flags
+        if (borderProps.TryGetValue("diagonalup", out var duVal)) diagonalUp = IsTruthy(duVal);
+        if (borderProps.TryGetValue("diagonaldown", out var ddVal)) diagonalDown = IsTruthy(ddVal);
+
+        // Search for existing match
+        int idx = 0;
+        foreach (var b in borders.Elements<Border>())
+        {
+            if (BorderMatches(b, leftStyle, rightStyle, topStyle, bottomStyle, diagonalStyle,
+                leftColor, rightColor, topColor, bottomColor, diagonalColor,
+                diagonalUp, diagonalDown))
+                return (uint)idx;
+            idx++;
+        }
+
+        // Create new border
+        var newBorder = new Border();
+
+        newBorder.Append(CreateBorderElement<LeftBorder>(leftStyle, leftColor));
+        newBorder.Append(CreateBorderElement<RightBorder>(rightStyle, rightColor));
+        newBorder.Append(CreateBorderElement<TopBorder>(topStyle, topColor));
+        newBorder.Append(CreateBorderElement<BottomBorder>(bottomStyle, bottomColor));
+        newBorder.Append(CreateBorderElement<DiagonalBorder>(diagonalStyle, diagonalColor));
+
+        if (diagonalUp) newBorder.DiagonalUp = true;
+        if (diagonalDown) newBorder.DiagonalDown = true;
+
+        borders.Append(newBorder);
+        borders.Count = (uint)borders.Elements<Border>().Count();
+
+        return (uint)(borders.Elements<Border>().Count() - 1);
+    }
+
+    private static T CreateBorderElement<T>(BorderStyleValues style, string? color) where T : BorderPropertiesType, new()
+    {
+        var element = new T();
+        if (style != BorderStyleValues.None)
+        {
+            element.Style = style;
+            if (color != null)
+                element.Color = new Color { Rgb = color };
+        }
+        return element;
+    }
+
+    private static bool BorderMatches(Border border,
+        BorderStyleValues leftStyle, BorderStyleValues rightStyle,
+        BorderStyleValues topStyle, BorderStyleValues bottomStyle,
+        BorderStyleValues diagonalStyle,
+        string? leftColor, string? rightColor,
+        string? topColor, string? bottomColor, string? diagonalColor,
+        bool diagonalUp, bool diagonalDown)
+    {
+        if (!BorderSideMatches(border.LeftBorder, leftStyle, leftColor)) return false;
+        if (!BorderSideMatches(border.RightBorder, rightStyle, rightColor)) return false;
+        if (!BorderSideMatches(border.TopBorder, topStyle, topColor)) return false;
+        if (!BorderSideMatches(border.BottomBorder, bottomStyle, bottomColor)) return false;
+        if (!BorderSideMatches(border.DiagonalBorder, diagonalStyle, diagonalColor)) return false;
+        if ((border.DiagonalUp?.Value ?? false) != diagonalUp) return false;
+        if ((border.DiagonalDown?.Value ?? false) != diagonalDown) return false;
+        return true;
+    }
+
+    private static bool BorderSideMatches(BorderPropertiesType? side, BorderStyleValues style, string? color)
+    {
+        var sideStyle = side?.Style?.Value ?? BorderStyleValues.None;
+        if (sideStyle != style) return false;
+        var sideColor = side?.Color?.Rgb?.Value;
+        if (color != null)
+        {
+            if (!string.Equals(sideColor, color, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        else if (sideColor != null) return false;
+        return true;
+    }
+
+    private static BorderStyleValues ParseBorderStyle(string value) =>
+        value.ToLowerInvariant() switch
+        {
+            "thin" => BorderStyleValues.Thin,
+            "medium" => BorderStyleValues.Medium,
+            "thick" => BorderStyleValues.Thick,
+            "double" => BorderStyleValues.Double,
+            "dashed" => BorderStyleValues.Dashed,
+            "dotted" => BorderStyleValues.Dotted,
+            "dashdot" => BorderStyleValues.DashDot,
+            "dashdotdot" => BorderStyleValues.DashDotDot,
+            "hair" => BorderStyleValues.Hair,
+            "mediumdashed" => BorderStyleValues.MediumDashed,
+            "mediumdashdot" => BorderStyleValues.MediumDashDot,
+            "mediumdashdotdot" => BorderStyleValues.MediumDashDotDot,
+            "slantdashdot" => BorderStyleValues.SlantDashDot,
+            "none" => BorderStyleValues.None,
+            _ => BorderStyleValues.None,
+        };
+
     // ==================== CellFormat ====================
 
     private static uint FindOrCreateCellFormat(CellFormats cellFormats,
         uint numFmtId, uint fontId, uint fillId, uint borderId, Alignment? alignment,
-        bool applyNumFmt, bool applyFont, bool applyFill, bool applyAlignment)
+        bool applyNumFmt, bool applyFont, bool applyFill, bool applyBorder, bool applyAlignment)
     {
         // Search for existing match
         int idx = 0;
@@ -366,6 +545,7 @@ public class ExcelStyleManager
         if (applyNumFmt) newXf.ApplyNumberFormat = true;
         if (applyFont) newXf.ApplyFont = true;
         if (applyFill) newXf.ApplyFill = true;
+        if (applyBorder) newXf.ApplyBorder = true;
         if (applyAlignment && alignment != null)
         {
             newXf.ApplyAlignment = true;

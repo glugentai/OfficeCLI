@@ -283,6 +283,148 @@ public class PptxFunctionalTests : IDisposable
         cell!.Text.Should().Be("Cell A1");
     }
 
+    // ==================== Table Row Add Lifecycle ====================
+
+    [Fact]
+    public void AddRow_FullLifecycle()
+    {
+        // 1. Create slide + table
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "table", null, new() { ["rows"] = "1", ["cols"] = "2" });
+
+        // 2. Add row with cell text
+        var path = _handler.Add("/slide[1]/table[1]", "row", null, new() { ["c1"] = "Hello", ["c2"] = "World" });
+        path.Should().Be("/slide[1]/table[1]/tr[2]");
+
+        // 3. Get + Verify
+        var table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        var row2 = table.Children.Where(c => c.Type == "tr").ElementAt(1);
+        row2.Children[0].Text.Should().Be("Hello");
+        row2.Children[1].Text.Should().Be("World");
+
+        // 4. Set (modify cell text)
+        _handler.Set("/slide[1]/table[1]/tr[2]/tc[1]", new() { ["text"] = "Modified" });
+
+        // 5. Get + Verify again
+        table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        row2 = table.Children.Where(c => c.Type == "tr").ElementAt(1);
+        row2.Children[0].Text.Should().Be("Modified");
+        row2.Children[1].Text.Should().Be("World");
+
+        // 6. Persistence: Reopen + Verify
+        Reopen();
+        table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        row2 = table.Children.Where(c => c.Type == "tr").ElementAt(1);
+        row2.Children[0].Text.Should().Be("Modified");
+        row2.Children[1].Text.Should().Be("World");
+    }
+
+    [Fact]
+    public void AddRow_AtIndex_FullLifecycle()
+    {
+        // 1. Create slide + table with 2 rows
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "table", null, new() { ["rows"] = "2", ["cols"] = "1" });
+        _handler.Set("/slide[1]/table[1]/tr[1]/tc[1]", new() { ["text"] = "First" });
+        _handler.Set("/slide[1]/table[1]/tr[2]/tc[1]", new() { ["text"] = "Last" });
+
+        // 2. Add row at index 1
+        var path = _handler.Add("/slide[1]/table[1]", "row", 1, new() { ["c1"] = "Middle" });
+        path.Should().Be("/slide[1]/table[1]/tr[2]");
+
+        // 3. Get + Verify order
+        var table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        var rows = table.Children.Where(c => c.Type == "tr").ToList();
+        rows[0].Children[0].Text.Should().Be("First");
+        rows[1].Children[0].Text.Should().Be("Middle");
+        rows[2].Children[0].Text.Should().Be("Last");
+
+        // 4. Set (modify inserted row)
+        _handler.Set("/slide[1]/table[1]/tr[2]/tc[1]", new() { ["text"] = "Center" });
+
+        // 5. Get + Verify
+        table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        rows = table.Children.Where(c => c.Type == "tr").ToList();
+        rows[1].Children[0].Text.Should().Be("Center");
+
+        // 6. Persistence
+        Reopen();
+        table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        rows = table.Children.Where(c => c.Type == "tr").ToList();
+        rows[1].Children[0].Text.Should().Be("Center");
+    }
+
+    // ==================== Table Cell Add Lifecycle ====================
+
+    [Fact]
+    public void AddCell_FullLifecycle()
+    {
+        // 1. Create slide + table
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "table", null, new() { ["rows"] = "1", ["cols"] = "1" });
+
+        // 2. Add cell
+        var path = _handler.Add("/slide[1]/table[1]/tr[1]", "cell", null, new() { ["text"] = "NewCell" });
+        path.Should().Be("/slide[1]/table[1]/tr[1]/tc[2]");
+
+        // 3. Get + Verify
+        var table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        var row = table.Children.First(c => c.Type == "tr");
+        row.Children.Should().HaveCount(2);
+        row.Children[1].Text.Should().Be("NewCell");
+
+        // 4. Set (modify)
+        _handler.Set("/slide[1]/table[1]/tr[1]/tc[2]", new() { ["text"] = "Updated" });
+
+        // 5. Get + Verify
+        table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        row = table.Children.First(c => c.Type == "tr");
+        row.Children[1].Text.Should().Be("Updated");
+
+        // 6. Persistence
+        Reopen();
+        table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        row = table.Children.First(c => c.Type == "tr");
+        row.Children[1].Text.Should().Be("Updated");
+    }
+
+    [Fact]
+    public void AddCell_AtIndex_FullLifecycle()
+    {
+        // 1. Create slide + table with 2 cells
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "table", null, new() { ["rows"] = "1", ["cols"] = "2" });
+        _handler.Set("/slide[1]/table[1]/tr[1]/tc[1]", new() { ["text"] = "A" });
+        _handler.Set("/slide[1]/table[1]/tr[1]/tc[2]", new() { ["text"] = "C" });
+
+        // 2. Add cell at index 1
+        var path = _handler.Add("/slide[1]/table[1]/tr[1]", "cell", 1, new() { ["text"] = "B" });
+        path.Should().Be("/slide[1]/table[1]/tr[1]/tc[2]");
+
+        // 3. Get + Verify order
+        var table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        var row = table.Children.First(c => c.Type == "tr");
+        row.Children[0].Text.Should().Be("A");
+        row.Children[1].Text.Should().Be("B");
+        row.Children[2].Text.Should().Be("C");
+
+        // 4. Set (modify inserted cell)
+        _handler.Set("/slide[1]/table[1]/tr[1]/tc[2]", new() { ["text"] = "Beta" });
+
+        // 5. Get + Verify
+        table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        row = table.Children.First(c => c.Type == "tr");
+        row.Children[1].Text.Should().Be("Beta");
+
+        // 6. Persistence
+        Reopen();
+        table = _handler.Get("/slide[1]/table[1]", depth: 2);
+        row = table.Children.First(c => c.Type == "tr");
+        row.Children[0].Text.Should().Be("A");
+        row.Children[1].Text.Should().Be("Beta");
+        row.Children[2].Text.Should().Be("C");
+    }
+
     // ==================== Slide background ====================
 
     [Fact]

@@ -23,6 +23,252 @@ public partial class WordHandler
             return unsupported;
         }
 
+        // TOC paths: /toc[N]
+        var tocMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/toc\[(\d+)\]$");
+        if (tocMatch.Success)
+        {
+            var tocIdx = int.Parse(tocMatch.Groups[1].Value);
+            var tocParas = FindTocParagraphs();
+            if (tocIdx < 1 || tocIdx > tocParas.Count)
+                throw new ArgumentException($"TOC {tocIdx} not found (total: {tocParas.Count})");
+
+            var tocPara = tocParas[tocIdx - 1];
+
+            // Rebuild the field code from properties
+            var instrRun = tocPara.Descendants<Run>()
+                .FirstOrDefault(r => r.GetFirstChild<FieldCode>() != null);
+            if (instrRun == null)
+                throw new InvalidOperationException("TOC field code not found");
+
+            var fieldCode = instrRun.GetFirstChild<FieldCode>()!;
+            var instr = fieldCode.Text ?? "";
+
+            // Update levels
+            if (properties.TryGetValue("levels", out var newLevels))
+            {
+                var levelsRx = System.Text.RegularExpressions.Regex.Match(instr, @"\\o\s+""[^""]+""");
+                instr = levelsRx.Success
+                    ? instr.Replace(levelsRx.Value, $"\\o \"{newLevels}\"")
+                    : instr.TrimEnd() + $" \\o \"{newLevels}\" ";
+            }
+
+            // Update hyperlinks switch
+            if (properties.TryGetValue("hyperlinks", out var hlSwitch))
+            {
+                if (bool.Parse(hlSwitch) && !instr.Contains("\\h"))
+                    instr = instr.TrimEnd() + " \\h ";
+                else if (!bool.Parse(hlSwitch))
+                    instr = instr.Replace("\\h", "").Replace("  ", " ");
+            }
+
+            // Update page numbers switch (\\z = hide page numbers)
+            if (properties.TryGetValue("pagenumbers", out var pnSwitch))
+            {
+                if (!bool.Parse(pnSwitch) && !instr.Contains("\\z"))
+                    instr = instr.TrimEnd() + " \\z ";
+                else if (bool.Parse(pnSwitch))
+                    instr = instr.Replace("\\z", "").Replace("  ", " ");
+            }
+
+            fieldCode.Text = instr;
+
+            // Mark field as dirty so Word updates it on open
+            var beginRun = tocPara.Descendants<Run>()
+                .FirstOrDefault(r => r.GetFirstChild<FieldChar>()?.FieldCharType?.Value == FieldCharValues.Begin);
+            if (beginRun != null)
+            {
+                var fldChar = beginRun.GetFirstChild<FieldChar>()!;
+                fldChar.Dirty = true;
+            }
+
+            _doc.MainDocumentPart?.Document?.Save();
+            return unsupported;
+        }
+
+        // Footnote paths: /footnote[N]
+        var fnSetMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/footnote\[(\d+)\]$");
+        if (fnSetMatch.Success)
+        {
+            var fnId = int.Parse(fnSetMatch.Groups[1].Value);
+            var fn = _doc.MainDocumentPart?.FootnotesPart?.Footnotes?
+                .Elements<Footnote>().FirstOrDefault(f => f.Id?.Value == fnId)
+                ?? throw new ArgumentException($"Footnote {fnId} not found");
+
+            if (properties.TryGetValue("text", out var fnText))
+            {
+                // Find the content paragraph (skip the reference mark run)
+                var contentRuns = fn.Descendants<Run>()
+                    .Where(r => r.GetFirstChild<FootnoteReferenceMark>() == null).ToList();
+                if (contentRuns.Count > 0)
+                {
+                    var textEl = contentRuns[0].GetFirstChild<Text>();
+                    if (textEl != null) textEl.Text = " " + fnText;
+                    else contentRuns[0].AppendChild(new Text(" " + fnText) { Space = SpaceProcessingModeValues.Preserve });
+                }
+            }
+            _doc.MainDocumentPart?.FootnotesPart?.Footnotes?.Save();
+            return unsupported;
+        }
+
+        // Endnote paths: /endnote[N]
+        var enSetMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/endnote\[(\d+)\]$");
+        if (enSetMatch.Success)
+        {
+            var enId = int.Parse(enSetMatch.Groups[1].Value);
+            var en = _doc.MainDocumentPart?.EndnotesPart?.Endnotes?
+                .Elements<Endnote>().FirstOrDefault(e => e.Id?.Value == enId)
+                ?? throw new ArgumentException($"Endnote {enId} not found");
+
+            if (properties.TryGetValue("text", out var enText))
+            {
+                var contentRuns = en.Descendants<Run>()
+                    .Where(r => r.GetFirstChild<EndnoteReferenceMark>() == null).ToList();
+                if (contentRuns.Count > 0)
+                {
+                    var textEl = contentRuns[0].GetFirstChild<Text>();
+                    if (textEl != null) textEl.Text = " " + enText;
+                    else contentRuns[0].AppendChild(new Text(" " + enText) { Space = SpaceProcessingModeValues.Preserve });
+                }
+            }
+            _doc.MainDocumentPart?.EndnotesPart?.Endnotes?.Save();
+            return unsupported;
+        }
+
+        // Section paths: /section[N]
+        var secSetMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/section\[(\d+)\]$");
+        if (secSetMatch.Success)
+        {
+            var secIdx = int.Parse(secSetMatch.Groups[1].Value);
+            var sectionProps = FindSectionProperties();
+            if (secIdx < 1 || secIdx > sectionProps.Count)
+                throw new ArgumentException($"Section {secIdx} not found (total: {sectionProps.Count})");
+
+            var sectPr = sectionProps[secIdx - 1];
+            foreach (var (key, value) in properties)
+            {
+                switch (key.ToLowerInvariant())
+                {
+                    case "type":
+                        var st = sectPr.GetFirstChild<SectionType>() ?? sectPr.PrependChild(new SectionType());
+                        st.Val = value.ToLowerInvariant() switch
+                        {
+                            "continuous" => SectionMarkValues.Continuous,
+                            "evenpage" or "even" => SectionMarkValues.EvenPage,
+                            "oddpage" or "odd" => SectionMarkValues.OddPage,
+                            _ => SectionMarkValues.NextPage
+                        };
+                        break;
+                    case "pagewidth":
+                        (sectPr.GetFirstChild<PageSize>() ?? sectPr.AppendChild(new PageSize())).Width = uint.Parse(value);
+                        break;
+                    case "pageheight":
+                        (sectPr.GetFirstChild<PageSize>() ?? sectPr.AppendChild(new PageSize())).Height = uint.Parse(value);
+                        break;
+                    case "orientation":
+                        var ps = sectPr.GetFirstChild<PageSize>() ?? sectPr.AppendChild(new PageSize());
+                        ps.Orient = value.ToLowerInvariant() == "landscape"
+                            ? PageOrientationValues.Landscape : PageOrientationValues.Portrait;
+                        break;
+                    case "margintop":
+                        (sectPr.GetFirstChild<PageMargin>() ?? sectPr.AppendChild(new PageMargin())).Top = int.Parse(value);
+                        break;
+                    case "marginbottom":
+                        (sectPr.GetFirstChild<PageMargin>() ?? sectPr.AppendChild(new PageMargin())).Bottom = int.Parse(value);
+                        break;
+                    case "marginleft":
+                        (sectPr.GetFirstChild<PageMargin>() ?? sectPr.AppendChild(new PageMargin())).Left = uint.Parse(value);
+                        break;
+                    case "marginright":
+                        (sectPr.GetFirstChild<PageMargin>() ?? sectPr.AppendChild(new PageMargin())).Right = uint.Parse(value);
+                        break;
+                    default:
+                        unsupported.Add(key);
+                        break;
+                }
+            }
+            _doc.MainDocumentPart?.Document?.Save();
+            return unsupported;
+        }
+
+        // Style paths: /styles/StyleId
+        var styleSetMatch = System.Text.RegularExpressions.Regex.Match(path, @"^/styles/(.+)$");
+        if (styleSetMatch.Success)
+        {
+            var styleId = styleSetMatch.Groups[1].Value;
+            var styles = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
+                ?? throw new InvalidOperationException("No styles part");
+            var style = styles.Elements<Style>().FirstOrDefault(s =>
+                s.StyleId?.Value == styleId || s.StyleName?.Val?.Value == styleId)
+                ?? throw new ArgumentException($"Style '{styleId}' not found");
+
+            foreach (var (key, value) in properties)
+            {
+                switch (key.ToLowerInvariant())
+                {
+                    case "name":
+                        var sn = style.StyleName ?? style.AppendChild(new StyleName());
+                        sn.Val = value;
+                        break;
+                    case "basedon":
+                        var bo = style.BasedOn ?? style.AppendChild(new BasedOn());
+                        bo.Val = value;
+                        break;
+                    case "next":
+                        var ns = style.NextParagraphStyle ?? style.AppendChild(new NextParagraphStyle());
+                        ns.Val = value;
+                        break;
+                    case "font":
+                        var rPr = style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties());
+                        rPr.RunFonts = new RunFonts { Ascii = value, HighAnsi = value, EastAsia = value };
+                        break;
+                    case "size":
+                        var rPr2 = style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties());
+                        rPr2.FontSize = new FontSize { Val = (int.Parse(value) * 2).ToString() };
+                        break;
+                    case "bold":
+                        var rPr3 = style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties());
+                        rPr3.Bold = bool.Parse(value) ? new Bold() : null;
+                        break;
+                    case "italic":
+                        var rPr4 = style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties());
+                        rPr4.Italic = bool.Parse(value) ? new Italic() : null;
+                        break;
+                    case "color":
+                        var rPr5 = style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties());
+                        rPr5.Color = new Color { Val = value.ToUpperInvariant() };
+                        break;
+                    case "alignment":
+                        var pPr = style.StyleParagraphProperties ?? style.AppendChild(new StyleParagraphProperties());
+                        pPr.Justification = new Justification
+                        {
+                            Val = value.ToLowerInvariant() switch
+                            {
+                                "center" => JustificationValues.Center,
+                                "right" => JustificationValues.Right,
+                                "justify" => JustificationValues.Both,
+                                _ => JustificationValues.Left
+                            }
+                        };
+                        break;
+                    case "spacebefore":
+                        var pPr2 = style.StyleParagraphProperties ?? style.AppendChild(new StyleParagraphProperties());
+                        var sp2 = pPr2.SpacingBetweenLines ?? (pPr2.SpacingBetweenLines = new SpacingBetweenLines());
+                        sp2.Before = value;
+                        break;
+                    case "spaceafter":
+                        var pPr3 = style.StyleParagraphProperties ?? style.AppendChild(new StyleParagraphProperties());
+                        var sp3 = pPr3.SpacingBetweenLines ?? (pPr3.SpacingBetweenLines = new SpacingBetweenLines());
+                        sp3.After = value;
+                        break;
+                    default:
+                        unsupported.Add(key);
+                        break;
+                }
+            }
+            styles.Save();
+            return unsupported;
+        }
+
         var parts = ParsePath(path);
         var element = NavigateToElement(parts);
         if (element == null)
@@ -111,6 +357,16 @@ public partial class WordHandler
                         break;
                     case "strike":
                         EnsureRunProperties(run).Strike = bool.Parse(value) ? new Strike() : null;
+                        break;
+                    case "superscript":
+                        EnsureRunProperties(run).VerticalTextAlignment = bool.Parse(value)
+                            ? new VerticalTextAlignment { Val = VerticalPositionValues.Superscript }
+                            : null;
+                        break;
+                    case "subscript":
+                        EnsureRunProperties(run).VerticalTextAlignment = bool.Parse(value)
+                            ? new VerticalTextAlignment { Val = VerticalPositionValues.Subscript }
+                            : null;
                         break;
                     case "shading":
                     case "shd":
@@ -223,6 +479,44 @@ public partial class WordHandler
                     case "firstlineindent":
                         var indent = pProps.Indentation ?? (pProps.Indentation = new Indentation());
                         indent.FirstLine = (int.Parse(value) * 480).ToString(); // chars to twips (~480 per char)
+                        indent.Hanging = null; // firstline and hanging are mutually exclusive
+                        break;
+                    case "leftindent" or "indentleft":
+                        var indentL = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                        indentL.Left = value; // twips
+                        break;
+                    case "rightindent" or "indentright":
+                        var indentR = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                        indentR.Right = value; // twips
+                        break;
+                    case "hangingindent" or "hanging":
+                        var indentH = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                        indentH.Hanging = value; // twips
+                        indentH.FirstLine = null; // hanging and firstline are mutually exclusive
+                        break;
+                    case "keepnext":
+                        if (bool.Parse(value))
+                            pProps.KeepNext ??= new KeepNext();
+                        else
+                            pProps.KeepNext = null;
+                        break;
+                    case "keeplines" or "keeptogether":
+                        if (bool.Parse(value))
+                            pProps.KeepLines ??= new KeepLines();
+                        else
+                            pProps.KeepLines = null;
+                        break;
+                    case "pagebreakbefore":
+                        if (bool.Parse(value))
+                            pProps.PageBreakBefore ??= new PageBreakBefore();
+                        else
+                            pProps.PageBreakBefore = null;
+                        break;
+                    case "widowcontrol":
+                        if (bool.Parse(value))
+                            pProps.WidowControl ??= new WidowControl();
+                        else
+                            pProps.WidowControl = null;
                         break;
                     case "shading":
                     case "shd":
