@@ -134,12 +134,14 @@ public partial class PowerPointHandler
     {
         // Normalize alternative format: "LINEAR;C1;C2;angle" → "C1-C2-angle"
         value = NormalizeGradientValue(value);
+        // Build new fill BEFORE removing old one (atomic: no data loss on invalid color)
+        var newFill = BuildGradientFill(value);
         spPr.RemoveAllChildren<Drawing.SolidFill>();
         spPr.RemoveAllChildren<Drawing.NoFill>();
         spPr.RemoveAllChildren<Drawing.GradientFill>();
         spPr.RemoveAllChildren<Drawing.PatternFill>();
         spPr.RemoveAllChildren<Drawing.BlipFill>();
-        InsertFillElement(spPr, BuildGradientFill(value));
+        InsertFillElement(spPr, newFill);
     }
 
     /// <summary>
