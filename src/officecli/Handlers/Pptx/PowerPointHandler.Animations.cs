@@ -398,10 +398,14 @@ public partial class PowerPointHandler
         else
         {
             // Auto: first animation on slide → click, subsequent → after previous (sequential)
+            // Exception: morph slides default to after (morph already shows shapes, click would be invisible)
             var hasExistingAnimations = slide.GetFirstChild<Timing>()
                 ?.Descendants<CommonTimeNode>()
                 .Any(ctn => ctn.PresetId != null) ?? false;
-            trigger = hasExistingAnimations ? AnimTrigger.AfterPrevious : AnimTrigger.OnClick;
+            var hasMorphTransition = slide.ChildElements.Any(c =>
+                c.LocalName == "AlternateContent" && c.InnerXml.Contains("morph"));
+            trigger = (hasExistingAnimations || hasMorphTransition)
+                ? AnimTrigger.AfterPrevious : AnimTrigger.OnClick;
         }
 
         // Get filter string, preset ID, and subtype from effect name
@@ -424,13 +428,42 @@ public partial class PowerPointHandler
         // The outer click-group delay depends on trigger
         var outerDelay = trigger == AnimTrigger.OnClick ? "indefinite" : "0";
 
-        // Build the click-group par
+        // Build the animation par
         var clickGroup = BuildClickGroup(
             shapeId.ToString(), presetId, presetClass, nodeType,
             durationMs, filter, grpId, outerDelay, presetSubtype, ref nextId,
             delayMs, easingAccel, easingDecel);
 
-        mainSeqCTn.ChildTimeNodeList!.AppendChild(clickGroup);
+        if (trigger == AnimTrigger.WithPrevious)
+        {
+            // "With previous" must be nested inside the previous animation's outer par,
+            // not as a separate sibling — otherwise PowerPoint treats it as sequential.
+            var lastGroup = mainSeqCTn.ChildTimeNodeList!
+                .Elements<ParallelTimeNode>().LastOrDefault();
+            if (lastGroup?.CommonTimeNode?.ChildTimeNodeList != null)
+            {
+                // Extract the mid par (delay wrapper + effect) from the built group
+                var midPar = clickGroup.CommonTimeNode?.ChildTimeNodeList?.FirstChild;
+                if (midPar != null)
+                {
+                    midPar.Remove();
+                    lastGroup.CommonTimeNode.ChildTimeNodeList.AppendChild(midPar);
+                }
+                else
+                {
+                    mainSeqCTn.ChildTimeNodeList!.AppendChild(clickGroup);
+                }
+            }
+            else
+            {
+                // No previous animation to attach to — fall back to separate par
+                mainSeqCTn.ChildTimeNodeList!.AppendChild(clickGroup);
+            }
+        }
+        else
+        {
+            mainSeqCTn.ChildTimeNodeList!.AppendChild(clickGroup);
+        }
 
         // Update bldLst if not already there
         var shapeIdStr = shapeId.ToString();
@@ -597,8 +630,61 @@ public partial class PowerPointHandler
         );
         effectChildList.AppendChild(setBehavior);
 
-        // p:animEffect
-        if (filter != null)
+        // Build effect-specific animation elements
+        if (presetId == 2 || presetId == 12) // fly / float
+        {
+            // p:anim for ppt_x or ppt_y property animation
+            BuildFlyAnimations(effectChildList, shapeId, durationMs, presetSubtype, isEntrance, ref nextId);
+        }
+        else if (presetId == 21) // zoom
+        {
+            // p:animScale from 0% to 100% (entrance) or 100% to 0% (exit)
+            var animScale = new AnimateScale
+            {
+                ZoomContents = true,
+                CommonBehavior = new CommonBehavior(
+                    new CommonTimeNode { Id = animEffId, Duration = durationMs.ToString(), Fill = TimeNodeFillValues.Hold },
+                    new TargetElement(new ShapeTarget { ShapeId = shapeId })
+                )
+            };
+            if (isEntrance)
+            {
+                animScale.FromPosition = new FromPosition { X = 0, Y = 0 };
+                animScale.ToPosition = new ToPosition { X = 100000, Y = 100000 };
+            }
+            else
+            {
+                animScale.FromPosition = new FromPosition { X = 100000, Y = 100000 };
+                animScale.ToPosition = new ToPosition { X = 0, Y = 0 };
+            }
+            effectChildList.AppendChild(animScale);
+        }
+        else if (presetId == 17) // swivel
+        {
+            // p:animRot (360° rotation) + p:animEffect filter="fade"
+            var animRot = new AnimateRotation
+            {
+                By = isEntrance ? 21600000 : -21600000, // ±360° in 60000ths of a degree
+                CommonBehavior = new CommonBehavior(
+                    new CommonTimeNode { Id = animEffId, Duration = durationMs.ToString(), Fill = TimeNodeFillValues.Hold },
+                    new TargetElement(new ShapeTarget { ShapeId = shapeId })
+                )
+            };
+            effectChildList.AppendChild(animRot);
+            // Add fade for smooth appearance/disappearance
+            var fadeId = nextId++;
+            var fadeEffect = new AnimateEffect
+            {
+                Transition = animTransition,
+                Filter = "fade",
+                CommonBehavior = new CommonBehavior(
+                    new CommonTimeNode { Id = fadeId, Duration = durationMs.ToString() },
+                    new TargetElement(new ShapeTarget { ShapeId = shapeId })
+                )
+            };
+            effectChildList.AppendChild(fadeEffect);
+        }
+        else if (filter != null) // standard animEffect-based animations
         {
             var animEffect = new AnimateEffect
             {
@@ -663,6 +749,53 @@ public partial class PowerPointHandler
             ChildTimeNodeList = outerChildList
         };
         return new ParallelTimeNode { CommonTimeNode = outerCTn };
+    }
+
+    /// <summary>
+    /// Build p:anim elements for fly/float entrance/exit.
+    /// Uses ppt_x or ppt_y property animation to move shape from/to off-screen.
+    /// </summary>
+    private static void BuildFlyAnimations(
+        ChildTimeNodeList effectChildList, string shapeId, int durationMs,
+        int presetSubtype, bool isEntrance, ref uint nextId)
+    {
+        // Determine axis and start/end formulas based on direction subtype
+        // Subtypes: 1=from-top, 2=from-right, 4=from-bottom(default), 8=from-left
+        var (attrName, offScreen, onScreen) = presetSubtype switch
+        {
+            8 => ("ppt_x", "0-#ppt_w/2", "#ppt_x"),       // from left
+            2 => ("ppt_x", "1+#ppt_w/2", "#ppt_x"),       // from right
+            1 => ("ppt_y", "0-#ppt_h/2", "#ppt_y"),       // from top
+            _ => ("ppt_y", "1+#ppt_h/2", "#ppt_y"),       // from bottom (default, subtype 4)
+        };
+
+        var startVal = isEntrance ? offScreen : onScreen;
+        var endVal = isEntrance ? onScreen : offScreen;
+
+        var animId = nextId++;
+        var anim = new Animate
+        {
+            CalculationMode = AnimateBehaviorCalculateModeValues.Linear,
+            ValueType = AnimateBehaviorValues.Number,
+            CommonBehavior = new CommonBehavior(
+                new CommonTimeNode { Id = animId, Duration = durationMs.ToString(), Fill = TimeNodeFillValues.Hold },
+                new TargetElement(new ShapeTarget { ShapeId = shapeId }),
+                new AttributeNameList(new AttributeName(attrName))
+            ) { Additive = BehaviorAdditiveValues.Base },
+            TimeAnimateValueList = new TimeAnimateValueList(
+                new TimeAnimateValue
+                {
+                    Time = "0",
+                    VariantValue = new VariantValue(new StringVariantValue { Val = startVal })
+                },
+                new TimeAnimateValue
+                {
+                    Time = "100000",
+                    VariantValue = new VariantValue(new StringVariantValue { Val = endVal })
+                }
+            )
+        };
+        effectChildList.AppendChild(anim);
     }
 
     private static void RemoveShapeAnimations(Slide slide, uint shapeId)
@@ -785,7 +918,33 @@ public partial class PowerPointHandler
         var motionGroup = BuildMotionPathGroup(
             shapeId.ToString(), durationMs, nodeType, grpId, outerDelay,
             pathPart, ref nextId, delayMs, easingAccel, easingDecel);
-        mainSeqCTn.ChildTimeNodeList!.AppendChild(motionGroup);
+
+        if (trigger == AnimTrigger.WithPrevious)
+        {
+            var lastGroup = mainSeqCTn.ChildTimeNodeList!
+                .Elements<ParallelTimeNode>().LastOrDefault();
+            if (lastGroup?.CommonTimeNode?.ChildTimeNodeList != null)
+            {
+                var midPar = motionGroup.CommonTimeNode?.ChildTimeNodeList?.FirstChild;
+                if (midPar != null)
+                {
+                    midPar.Remove();
+                    lastGroup.CommonTimeNode.ChildTimeNodeList.AppendChild(midPar);
+                }
+                else
+                {
+                    mainSeqCTn.ChildTimeNodeList!.AppendChild(motionGroup);
+                }
+            }
+            else
+            {
+                mainSeqCTn.ChildTimeNodeList!.AppendChild(motionGroup);
+            }
+        }
+        else
+        {
+            mainSeqCTn.ChildTimeNodeList!.AppendChild(motionGroup);
+        }
     }
 
     private static string NormaliseMotionPath(string path)
@@ -955,17 +1114,19 @@ public partial class PowerPointHandler
                 : rawPresetClass == "emphasis" ? "emphasis"
                 : "entrance";
 
-        // Duration from the animEffect child
-        var animEffect = effectCTn.Descendants<AnimateEffect>().FirstOrDefault();
+        // Duration: check animEffect, animScale, animRot, or anim children
         var dur = 500;
+        var animEffect = effectCTn.Descendants<AnimateEffect>().FirstOrDefault();
         if (int.TryParse(animEffect?.CommonBehavior?.CommonTimeNode?.Duration, out var d)) dur = d;
+        else if (int.TryParse(effectCTn.Descendants<AnimateScale>().FirstOrDefault()?.CommonBehavior?.CommonTimeNode?.Duration, out var d2)) dur = d2;
+        else if (int.TryParse(effectCTn.Descendants<AnimateRotation>().FirstOrDefault()?.CommonBehavior?.CommonTimeNode?.Duration, out var d3)) dur = d3;
+        else if (int.TryParse(effectCTn.Descendants<Animate>().FirstOrDefault()?.CommonBehavior?.CommonTimeNode?.Duration, out var d4)) dur = d4;
 
-        // Effect name from filter string
+        // Effect name from filter string or presetId
         var filter = animEffect?.Filter?.Value ?? "";
         var presetId = effectCTn.PresetId?.Value ?? 0;
         var effectName = filter switch
         {
-            "fly"                                       => "fly",
             var f when f.StartsWith("blinds")           => "blinds",
             "box"                                       => "box",
             var f when f.StartsWith("checkerboard")     => "checkerboard",
@@ -973,23 +1134,22 @@ public partial class PowerPointHandler
             var f when f.StartsWith("crawl")            => "crawl",
             "diamond"                                   => "diamond",
             "dissolve"                                  => "dissolve",
-            "fade"                                      => "fade",
+            "fade" when presetId != 17                  => "fade", // exclude swivel which uses fade+animRot
             "flash"                                     => "flash",
             "plus"                                      => "plus",
             "random"                                    => "random",
             var f when f.StartsWith("barn")             => "split",
             var f when f.StartsWith("strips")           => "strips",
-            "swivel"                                    => "swivel",
             "wedge"                                     => "wedge",
             var f when f.StartsWith("wheel")            => "wheel",
             var f when f.StartsWith("wipe")             => "wipe",
-            "zoom"                                      => "zoom",
-            "" when presetId == 1                       => "appear",
-            "" when presetId == 24                      => "bounce",
-            _                                           => presetId switch
+            _ => presetId switch
             {
                 1  => "appear",
+                2  => "fly",
                 10 => "fade",
+                12 => "float",
+                17 => "swivel",
                 21 => "zoom",
                 24 => "bounce",
                 _  => "unknown"
@@ -1143,7 +1303,7 @@ public partial class PowerPointHandler
             return effect switch
             {
                 "appear"                          => (1,  null),
-                "fly" or "flyin" or "flyout"      => (2,  "fly"),
+                "fly" or "flyin" or "flyout"      => (2,  null),
                 "blinds"                          => (3,  "blinds(horizontal)"),
                 "box"                             => (4,  "box"),
                 "checkerboard" or "checker"       => (5,  "checkerboard(across)"),
@@ -1153,18 +1313,18 @@ public partial class PowerPointHandler
                 "dissolve"                        => (9,  "dissolve"),
                 "fade"                            => (10, "fade"),
                 "flash" or "flashonce"            => (11, "flash"),
-                "float"                           => (12, "fly"),
+                "float"                           => (12, null),
                 "plus"                            => (13, "plus"),
                 "random"                          => (14, "random"),
                 "split"                           => (15, "barn(inHorizontal)"),
                 "strips"                          => (16, "strips(downLeft)"),
-                "swivel"                          => (17, "swivel"),
+                "swivel"                          => (17, null),
                 "wedge"                           => (18, "wedge"),
                 "wheel"                           => (19, "wheel(1)"),
                 "wipe"                            => (20, "wipe(left)"),
-                "zoom"                            => (21, "zoom"),
+                "zoom"                            => (21, null),
                 "bounce"                          => (24, null),
-                "swipe" or "sweep"                => (2,  "fly"),
+                "swipe" or "sweep"                => (2,  null),
                 _ => throw new ArgumentException(
                     $"Unknown animation effect: '{effect}'. " +
                     "Supported entrance/exit effects: appear, fade, fly, zoom, wipe, bounce, float, split, " +
@@ -1322,9 +1482,13 @@ public partial class PowerPointHandler
 
         foreach (var sp in slidesToProcess)
         {
-            // Don't strip if this slide still has morph from another direction
-            // (e.g. slide 3 has morph, user removes morph from slide 2 — don't strip slide 2
-            //  if slide 3 still morphs from slide 2)
+            // Don't strip if this slide itself has morph transition (it's a morph target)
+            var selfSlide = GetSlide(sp);
+            var hasMorphSelf = selfSlide.ChildElements.Any(c =>
+                c.LocalName == "AlternateContent" && c.InnerXml.Contains("morph"));
+            if (hasMorphSelf) continue;
+
+            // Don't strip if the next slide has morph (this slide is a morph source)
             var nextIdx = slideParts.IndexOf(sp) + 1;
             if (nextIdx < slideParts.Count)
             {
@@ -1348,5 +1512,24 @@ public partial class PowerPointHandler
 
             GetSlide(sp).Save();
         }
+    }
+
+    /// <summary>
+    /// Check if a slide is in a morph context: either the slide itself has a morph transition,
+    /// or the next slide has a morph transition (meaning this slide is the "before" frame).
+    /// </summary>
+    private bool SlideHasMorphContext(SlidePart slidePart, List<SlidePart> allParts)
+    {
+        bool hasMorph(SlidePart sp) =>
+            GetSlide(sp).ChildElements.Any(c =>
+                c.LocalName == "AlternateContent" && c.InnerXml.Contains("morph"));
+
+        if (hasMorph(slidePart)) return true;
+
+        var idx = allParts.IndexOf(slidePart);
+        if (idx >= 0 && idx + 1 < allParts.Count && hasMorph(allParts[idx + 1]))
+            return true;
+
+        return false;
     }
 }

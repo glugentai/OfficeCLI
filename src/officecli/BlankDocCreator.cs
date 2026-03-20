@@ -28,6 +28,7 @@ public static class BlankDocCreator
                 CreatePowerPoint(path);
                 // Output slide dimensions so callers know the canvas size
                 Console.WriteLine($"Created: {path}");
+                Console.WriteLine($"  totalSlides: 0");
                 Console.WriteLine($"  slideWidth: {Core.EmuConverter.FormatEmu(12192000)}");
                 Console.WriteLine($"  slideHeight: {Core.EmuConverter.FormatEmu(6858000)}");
                 break;

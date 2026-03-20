@@ -111,7 +111,7 @@ public partial class PowerPointHandler
                 var slideIdx = int.Parse(slideMatch.Groups[1].Value);
                 var slideParts = GetSlideParts().ToList();
                 if (slideIdx < 1 || slideIdx > slideParts.Count)
-                    throw new ArgumentException($"Slide {slideIdx} not found");
+                    throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
 
                 var slidePart = slideParts[slideIdx - 1];
                 var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -126,17 +126,15 @@ public partial class PowerPointHandler
                 var shapeId = maxExistingId + 1;
                 var shapeName = properties.GetValueOrDefault("name", $"TextBox {shapeId}");
 
+                // Auto-add !! prefix if the slide (or the next slide) has a morph transition
+                if (!shapeName.StartsWith("!!") && !shapeName.StartsWith("TextBox ") && !shapeName.StartsWith("Content ") && shapeName != "")
+                {
+                    if (SlideHasMorphContext(slidePart, slideParts))
+                        shapeName = "!!" + shapeName;
+                }
+
                 var newShape = CreateTextShape(shapeId, shapeName, text, false);
 
-                if (properties.TryGetValue("font", out var font))
-                {
-                    foreach (var run in newShape.Descendants<Drawing.Run>())
-                    {
-                        var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
-                        rProps.Append(new Drawing.LatinFont { Typeface = font });
-                        rProps.Append(new Drawing.EastAsianFont { Typeface = font });
-                    }
-                }
                 if (properties.TryGetValue("size", out var sizeStr))
                 {
                     var sizeVal = (int)Math.Round(ParseFontSize(sizeStr) * 100);
@@ -180,6 +178,17 @@ public partial class PowerPointHandler
                         {
                             rProps.AppendChild(solidFill);
                         }
+                    }
+                }
+
+                // Schema order: font (latin/ea) after fill
+                if (properties.TryGetValue("font", out var font))
+                {
+                    foreach (var run in newShape.Descendants<Drawing.Run>())
+                    {
+                        var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                        rProps.Append(new Drawing.LatinFont { Typeface = font });
+                        rProps.Append(new Drawing.EastAsianFont { Typeface = font });
                     }
                 }
 
@@ -401,7 +410,7 @@ public partial class PowerPointHandler
                 if (properties.TryGetValue("linewidth", out var lwStr) || properties.TryGetValue("lineWidth", out lwStr) || properties.TryGetValue("line.width", out lwStr))
                 {
                     var outline = EnsureOutline(newShape.ShapeProperties!);
-                    outline.Width = Core.EmuConverter.ParseEmuAsInt(lwStr);
+                    outline.Width = Core.EmuConverter.ParseLineWidth(lwStr);
                 }
 
                 // List style (bullet/numbered)
@@ -462,7 +471,7 @@ public partial class PowerPointHandler
                 var imgSlideIdx = int.Parse(imgSlideMatch.Groups[1].Value);
                 var imgSlideParts = GetSlideParts().ToList();
                 if (imgSlideIdx < 1 || imgSlideIdx > imgSlideParts.Count)
-                    throw new ArgumentException($"Slide {imgSlideIdx} not found");
+                    throw new ArgumentException($"Slide {imgSlideIdx} not found (total: {imgSlideParts.Count})");
 
                 var imgSlidePart = imgSlideParts[imgSlideIdx - 1];
                 var imgShapeTree = GetSlide(imgSlidePart).CommonSlideData?.ShapeTree
@@ -548,7 +557,7 @@ public partial class PowerPointHandler
                 var chartSlideIdx = int.Parse(chartSlideMatch.Groups[1].Value);
                 var chartSlideParts = GetSlideParts().ToList();
                 if (chartSlideIdx < 1 || chartSlideIdx > chartSlideParts.Count)
-                    throw new ArgumentException($"Slide {chartSlideIdx} not found");
+                    throw new ArgumentException($"Slide {chartSlideIdx} not found (total: {chartSlideParts.Count})");
 
                 var chartSlidePart = chartSlideParts[chartSlideIdx - 1];
                 var chartShapeTree = GetSlide(chartSlidePart).CommonSlideData?.ShapeTree
@@ -608,7 +617,7 @@ public partial class PowerPointHandler
                 var tblSlideIdx = int.Parse(tblSlideMatch.Groups[1].Value);
                 var tblSlideParts = GetSlideParts().ToList();
                 if (tblSlideIdx < 1 || tblSlideIdx > tblSlideParts.Count)
-                    throw new ArgumentException($"Slide {tblSlideIdx} not found");
+                    throw new ArgumentException($"Slide {tblSlideIdx} not found (total: {tblSlideParts.Count})");
 
                 var tblSlidePart = tblSlideParts[tblSlideIdx - 1];
                 var tblShapeTree = GetSlide(tblSlidePart).CommonSlideData?.ShapeTree
@@ -718,7 +727,7 @@ public partial class PowerPointHandler
                 var eqSlideIdx = int.Parse(eqSlideMatch.Groups[1].Value);
                 var eqSlideParts = GetSlideParts().ToList();
                 if (eqSlideIdx < 1 || eqSlideIdx > eqSlideParts.Count)
-                    throw new ArgumentException($"Slide {eqSlideIdx} not found");
+                    throw new ArgumentException($"Slide {eqSlideIdx} not found (total: {eqSlideParts.Count})");
 
                 var eqSlidePart = eqSlideParts[eqSlideIdx - 1];
                 var eqShapeTree = GetSlide(eqSlidePart).CommonSlideData?.ShapeTree
@@ -818,7 +827,7 @@ public partial class PowerPointHandler
                 var notesSlideIdx = int.Parse(notesSlideMatch.Groups[1].Value);
                 var notesSlideParts = GetSlideParts().ToList();
                 if (notesSlideIdx < 1 || notesSlideIdx > notesSlideParts.Count)
-                    throw new ArgumentException($"Slide {notesSlideIdx} not found");
+                    throw new ArgumentException($"Slide {notesSlideIdx} not found (total: {notesSlideParts.Count})");
                 var notesSlidePart = EnsureNotesSlidePart(notesSlideParts[notesSlideIdx - 1]);
                 if (properties.TryGetValue("text", out var notesText))
                     SetNotesText(notesSlidePart, notesText);
@@ -839,7 +848,7 @@ public partial class PowerPointHandler
                 var mediaSlideIdx = int.Parse(mediaSlideMatch.Groups[1].Value);
                 var mediaSlideParts = GetSlideParts().ToList();
                 if (mediaSlideIdx < 1 || mediaSlideIdx > mediaSlideParts.Count)
-                    throw new ArgumentException($"Slide {mediaSlideIdx} not found");
+                    throw new ArgumentException($"Slide {mediaSlideIdx} not found (total: {mediaSlideParts.Count})");
 
                 var mediaSlidePart = mediaSlideParts[mediaSlideIdx - 1];
                 var mediaShapeTree = GetSlide(mediaSlidePart).CommonSlideData?.ShapeTree
@@ -991,7 +1000,7 @@ public partial class PowerPointHandler
                 var cxnSlideIdx = int.Parse(cxnSlideMatch.Groups[1].Value);
                 var cxnSlideParts = GetSlideParts().ToList();
                 if (cxnSlideIdx < 1 || cxnSlideIdx > cxnSlideParts.Count)
-                    throw new ArgumentException($"Slide {cxnSlideIdx} not found");
+                    throw new ArgumentException($"Slide {cxnSlideIdx} not found (total: {cxnSlideParts.Count})");
 
                 var cxnSlidePart = cxnSlideParts[cxnSlideIdx - 1];
                 var cxnShapeTree = GetSlide(cxnSlidePart).CommonSlideData?.ShapeTree
@@ -1054,7 +1063,7 @@ public partial class PowerPointHandler
                 else
                     cxnOutline.AppendChild(BuildSolidFill("000000"));
                 if (properties.TryGetValue("linewidth", out var lwVal) || properties.TryGetValue("lineWidth", out lwVal))
-                    cxnOutline.Width = Core.EmuConverter.ParseEmuAsInt(lwVal);
+                    cxnOutline.Width = Core.EmuConverter.ParseLineWidth(lwVal);
                 if (properties.TryGetValue("lineDash", out var cxnDash) || properties.TryGetValue("linedash", out cxnDash))
                 {
                     cxnOutline.AppendChild(new Drawing.PresetDash
@@ -1096,7 +1105,7 @@ public partial class PowerPointHandler
                 var grpSlideIdx = int.Parse(grpSlideMatch.Groups[1].Value);
                 var grpSlideParts = GetSlideParts().ToList();
                 if (grpSlideIdx < 1 || grpSlideIdx > grpSlideParts.Count)
-                    throw new ArgumentException($"Slide {grpSlideIdx} not found");
+                    throw new ArgumentException($"Slide {grpSlideIdx} not found (total: {grpSlideParts.Count})");
 
                 var grpSlidePart = grpSlideParts[grpSlideIdx - 1];
                 var grpShapeTree = GetSlide(grpSlidePart).CommonSlideData?.ShapeTree
@@ -1351,19 +1360,20 @@ public partial class PowerPointHandler
                 var newRun = new Drawing.Run();
                 var rProps = new Drawing.RunProperties { Language = "en-US" };
 
-                if (properties.TryGetValue("font", out var pFont))
-                {
-                    rProps.Append(new Drawing.LatinFont { Typeface = pFont });
-                    rProps.Append(new Drawing.EastAsianFont { Typeface = pFont });
-                }
                 if (properties.TryGetValue("size", out var pSize))
                     rProps.FontSize = (int)Math.Round(ParseFontSize(pSize) * 100);
                 if (properties.TryGetValue("bold", out var pBold))
                     rProps.Bold = IsTruthy(pBold);
                 if (properties.TryGetValue("italic", out var pItalic))
                     rProps.Italic = IsTruthy(pItalic);
+                // Schema order: solidFill before latin/ea
                 if (properties.TryGetValue("color", out var pColor))
                     rProps.AppendChild(BuildSolidFill(pColor));
+                if (properties.TryGetValue("font", out var pFont))
+                {
+                    rProps.Append(new Drawing.LatinFont { Typeface = pFont });
+                    rProps.Append(new Drawing.EastAsianFont { Typeface = pFont });
+                }
                 if (properties.TryGetValue("spacing", out var pSpacing) || properties.TryGetValue("charspacing", out pSpacing))
                 {
                     if (!double.TryParse(pSpacing, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pSpcVal))
@@ -1441,11 +1451,6 @@ public partial class PowerPointHandler
                 var newRun = new Drawing.Run();
                 var rProps = new Drawing.RunProperties { Language = "en-US" };
 
-                if (properties.TryGetValue("font", out var rFont))
-                {
-                    rProps.Append(new Drawing.LatinFont { Typeface = rFont });
-                    rProps.Append(new Drawing.EastAsianFont { Typeface = rFont });
-                }
                 if (properties.TryGetValue("size", out var rSize))
                     rProps.FontSize = (int)Math.Round(ParseFontSize(rSize) * 100);
                 if (properties.TryGetValue("bold", out var rBold))
@@ -1472,8 +1477,14 @@ public partial class PowerPointHandler
                         "false" or "none" => Drawing.TextStrikeValues.NoStrike,
                         _ => throw new ArgumentException($"Invalid strikethrough value: '{rStrike}'. Valid values: single, double, none.")
                     };
+                // Schema order: solidFill before latin/ea
                 if (properties.TryGetValue("color", out var rColor))
                     rProps.AppendChild(BuildSolidFill(rColor));
+                if (properties.TryGetValue("font", out var rFont))
+                {
+                    rProps.Append(new Drawing.LatinFont { Typeface = rFont });
+                    rProps.Append(new Drawing.EastAsianFont { Typeface = rFont });
+                }
                 if (properties.TryGetValue("spacing", out var rSpacing) || properties.TryGetValue("charspacing", out rSpacing))
                     rProps.Spacing = (int)(ParseHelpers.SafeParseDouble(rSpacing, "charspacing") * 100);
                 if (properties.TryGetValue("baseline", out var rBaseline))
@@ -1506,6 +1517,265 @@ public partial class PowerPointHandler
                 return $"/slide[{runSlideIdx}]/shape[{runShapeIdx}]/paragraph[{targetParaIdx}]/run[{runCount}]";
             }
 
+            case "zoom" or "slidezoom" or "slide-zoom":
+            {
+                var zmSlideMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]$");
+                if (!zmSlideMatch.Success)
+                    throw new ArgumentException("Zoom must be added to a slide: /slide[N]");
+
+                // Target slide (required)
+                if (!properties.TryGetValue("target", out var targetStr) && !properties.TryGetValue("slide", out targetStr))
+                    throw new ArgumentException("'target' property required for zoom type (target slide number, e.g. target=2)");
+                if (!int.TryParse(targetStr, out var targetSlideNum))
+                    throw new ArgumentException($"Invalid 'target' value: '{targetStr}'. Expected a slide number.");
+
+                var zmSlideIdx = int.Parse(zmSlideMatch.Groups[1].Value);
+                var zmSlideParts = GetSlideParts().ToList();
+                if (zmSlideIdx < 1 || zmSlideIdx > zmSlideParts.Count)
+                    throw new ArgumentException($"Slide {zmSlideIdx} not found (total: {zmSlideParts.Count})");
+                if (targetSlideNum < 1 || targetSlideNum > zmSlideParts.Count)
+                    throw new ArgumentException($"Target slide {targetSlideNum} not found (total: {zmSlideParts.Count})");
+
+                var zmSlidePart = zmSlideParts[zmSlideIdx - 1];
+                var zmShapeTree = GetSlide(zmSlidePart).CommonSlideData?.ShapeTree
+                    ?? throw new InvalidOperationException("Slide has no shape tree");
+                var targetSlidePart = zmSlideParts[targetSlideNum - 1];
+
+                // Get target slide's SlideId from presentation.xml
+                var zmPresentation = _doc.PresentationPart?.Presentation
+                    ?? throw new InvalidOperationException("No presentation");
+                var zmSlideIdList = zmPresentation.GetFirstChild<SlideIdList>()
+                    ?? throw new InvalidOperationException("No slides");
+                var zmSlideIds = zmSlideIdList.Elements<SlideId>().ToList();
+                var targetSldId = zmSlideIds[targetSlideNum - 1].Id!.Value;
+
+                // Position and size (default: 8cm x 4.5cm, centered)
+                long zmCx = 3048000; // ~8cm
+                long zmCy = 1714500; // ~4.5cm
+                if (properties.TryGetValue("width", out var zmW)) zmCx = ParseEmu(zmW);
+                if (properties.TryGetValue("height", out var zmH)) zmCy = ParseEmu(zmH);
+                long zmX = (12192000 - zmCx) / 2;
+                long zmY = (6858000 - zmCy) / 2;
+                if (properties.TryGetValue("x", out var zmXStr)) zmX = ParseEmu(zmXStr);
+                if (properties.TryGetValue("y", out var zmYStr)) zmY = ParseEmu(zmYStr);
+
+                var returnToParent = properties.TryGetValue("returntoparent", out var rtp) && IsTruthy(rtp) ? "1" : "0";
+                var transitionDur = properties.GetValueOrDefault("transitiondur", "1000");
+
+                // Generate shape IDs
+                var zmShapeId = (uint)(zmShapeTree.ChildElements.Count + 2);
+                var zmName = properties.GetValueOrDefault("name", $"Slide Zoom {zmShapeId}");
+                var zmGuid = Guid.NewGuid().ToString("B").ToUpperInvariant();
+                var zmCreationId = Guid.NewGuid().ToString("B").ToUpperInvariant();
+
+                // Create a minimal 1x1 gray placeholder PNG (PowerPoint regenerates the thumbnail on open)
+                byte[] placeholderPng = GenerateZoomPlaceholderPng();
+                var zmImagePart = zmSlidePart.AddImagePart(ImagePartType.Png);
+                using (var ms = new MemoryStream(placeholderPng))
+                    zmImagePart.FeedData(ms);
+                var zmImageRelId = zmSlidePart.GetIdOfPart(zmImagePart);
+
+                // Create slide-to-slide relationship for fallback hyperlink
+                var zmSlideRelId = zmSlidePart.CreateRelationshipToPart(targetSlidePart);
+
+                // Build mc:AlternateContent programmatically (same pattern as morph transition)
+                var mcNs = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+                var pNs = "http://schemas.openxmlformats.org/presentationml/2006/main";
+                var aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
+                var rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+                var pslzNs = "http://schemas.microsoft.com/office/powerpoint/2016/slidezoom";
+                var p166Ns = "http://schemas.microsoft.com/office/powerpoint/2016/6/main";
+                var a16Ns = "http://schemas.microsoft.com/office/drawing/2014/main";
+
+                var acElement = new OpenXmlUnknownElement("mc", "AlternateContent", mcNs);
+
+                // === mc:Choice (for clients that support Slide Zoom) ===
+                var choiceElement = new OpenXmlUnknownElement("mc", "Choice", mcNs);
+                choiceElement.SetAttribute(new OpenXmlAttribute("", "Requires", null!, "pslz"));
+                choiceElement.AddNamespaceDeclaration("pslz", pslzNs);
+
+                var gfElement = new OpenXmlUnknownElement("p", "graphicFrame", pNs);
+                gfElement.AddNamespaceDeclaration("a", aNs);
+                gfElement.AddNamespaceDeclaration("r", rNs);
+
+                // nvGraphicFramePr
+                var nvGfPr = new OpenXmlUnknownElement("p", "nvGraphicFramePr", pNs);
+                var cNvPr = new OpenXmlUnknownElement("p", "cNvPr", pNs);
+                cNvPr.SetAttribute(new OpenXmlAttribute("", "id", null!, zmShapeId.ToString()));
+                cNvPr.SetAttribute(new OpenXmlAttribute("", "name", null!, zmName));
+                // creationId extension
+                var extLst = new OpenXmlUnknownElement("a", "extLst", aNs);
+                var ext = new OpenXmlUnknownElement("a", "ext", aNs);
+                ext.SetAttribute(new OpenXmlAttribute("", "uri", null!, "{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}"));
+                var creationId = new OpenXmlUnknownElement("a16", "creationId", a16Ns);
+                creationId.SetAttribute(new OpenXmlAttribute("", "id", null!, zmCreationId));
+                ext.AppendChild(creationId);
+                extLst.AppendChild(ext);
+                cNvPr.AppendChild(extLst);
+                nvGfPr.AppendChild(cNvPr);
+
+                var cNvGfSpPr = new OpenXmlUnknownElement("p", "cNvGraphicFramePr", pNs);
+                var gfLocks = new OpenXmlUnknownElement("a", "graphicFrameLocks", aNs);
+                gfLocks.SetAttribute(new OpenXmlAttribute("", "noChangeAspect", null!, "1"));
+                cNvGfSpPr.AppendChild(gfLocks);
+                nvGfPr.AppendChild(cNvGfSpPr);
+                nvGfPr.AppendChild(new OpenXmlUnknownElement("p", "nvPr", pNs));
+                gfElement.AppendChild(nvGfPr);
+
+                // xfrm (position/size)
+                var gfXfrm = new OpenXmlUnknownElement("p", "xfrm", pNs);
+                var gfOff = new OpenXmlUnknownElement("a", "off", aNs);
+                gfOff.SetAttribute(new OpenXmlAttribute("", "x", null!, zmX.ToString()));
+                gfOff.SetAttribute(new OpenXmlAttribute("", "y", null!, zmY.ToString()));
+                var gfExt = new OpenXmlUnknownElement("a", "ext", aNs);
+                gfExt.SetAttribute(new OpenXmlAttribute("", "cx", null!, zmCx.ToString()));
+                gfExt.SetAttribute(new OpenXmlAttribute("", "cy", null!, zmCy.ToString()));
+                gfXfrm.AppendChild(gfOff);
+                gfXfrm.AppendChild(gfExt);
+                gfElement.AppendChild(gfXfrm);
+
+                // graphic > graphicData > pslz:sldZm
+                var graphic = new OpenXmlUnknownElement("a", "graphic", aNs);
+                var graphicData = new OpenXmlUnknownElement("a", "graphicData", aNs);
+                graphicData.SetAttribute(new OpenXmlAttribute("", "uri", null!, pslzNs));
+
+                var sldZm = new OpenXmlUnknownElement("pslz", "sldZm", pslzNs);
+                var sldZmObj = new OpenXmlUnknownElement("pslz", "sldZmObj", pslzNs);
+                sldZmObj.SetAttribute(new OpenXmlAttribute("", "sldId", null!, targetSldId.ToString()));
+                sldZmObj.SetAttribute(new OpenXmlAttribute("", "cId", null!, "0"));
+
+                var zmPr = new OpenXmlUnknownElement("pslz", "zmPr", pslzNs);
+                zmPr.AddNamespaceDeclaration("p166", p166Ns);
+                zmPr.SetAttribute(new OpenXmlAttribute("", "id", null!, zmGuid));
+                zmPr.SetAttribute(new OpenXmlAttribute("", "returnToParent", null!, returnToParent));
+                zmPr.SetAttribute(new OpenXmlAttribute("", "transitionDur", null!, transitionDur));
+
+                // blipFill (thumbnail)
+                var blipFill = new OpenXmlUnknownElement("p166", "blipFill", p166Ns);
+                var blip = new OpenXmlUnknownElement("a", "blip", aNs);
+                blip.SetAttribute(new OpenXmlAttribute("r", "embed", rNs, zmImageRelId));
+                blipFill.AppendChild(blip);
+                var stretch = new OpenXmlUnknownElement("a", "stretch", aNs);
+                stretch.AppendChild(new OpenXmlUnknownElement("a", "fillRect", aNs));
+                blipFill.AppendChild(stretch);
+                zmPr.AppendChild(blipFill);
+
+                // spPr (shape properties inside zoom)
+                var zmSpPr = new OpenXmlUnknownElement("p166", "spPr", p166Ns);
+                var zmSpXfrm = new OpenXmlUnknownElement("a", "xfrm", aNs);
+                var zmSpOff = new OpenXmlUnknownElement("a", "off", aNs);
+                zmSpOff.SetAttribute(new OpenXmlAttribute("", "x", null!, "0"));
+                zmSpOff.SetAttribute(new OpenXmlAttribute("", "y", null!, "0"));
+                var zmSpExt = new OpenXmlUnknownElement("a", "ext", aNs);
+                zmSpExt.SetAttribute(new OpenXmlAttribute("", "cx", null!, zmCx.ToString()));
+                zmSpExt.SetAttribute(new OpenXmlAttribute("", "cy", null!, zmCy.ToString()));
+                zmSpXfrm.AppendChild(zmSpOff);
+                zmSpXfrm.AppendChild(zmSpExt);
+                zmSpPr.AppendChild(zmSpXfrm);
+                var prstGeom = new OpenXmlUnknownElement("a", "prstGeom", aNs);
+                prstGeom.SetAttribute(new OpenXmlAttribute("", "prst", null!, "rect"));
+                prstGeom.AppendChild(new OpenXmlUnknownElement("a", "avLst", aNs));
+                zmSpPr.AppendChild(prstGeom);
+                var zmLn = new OpenXmlUnknownElement("a", "ln", aNs);
+                zmLn.SetAttribute(new OpenXmlAttribute("", "w", null!, "3175"));
+                var zmLnFill = new OpenXmlUnknownElement("a", "solidFill", aNs);
+                var zmLnClr = new OpenXmlUnknownElement("a", "prstClr", aNs);
+                zmLnClr.SetAttribute(new OpenXmlAttribute("", "val", null!, "ltGray"));
+                zmLnFill.AppendChild(zmLnClr);
+                zmLn.AppendChild(zmLnFill);
+                zmSpPr.AppendChild(zmLn);
+                zmPr.AppendChild(zmSpPr);
+
+                sldZmObj.AppendChild(zmPr);
+                sldZm.AppendChild(sldZmObj);
+                graphicData.AppendChild(sldZm);
+                graphic.AppendChild(graphicData);
+                gfElement.AppendChild(graphic);
+                choiceElement.AppendChild(gfElement);
+
+                // === mc:Fallback (pic + hyperlink for older clients) ===
+                var fallbackElement = new OpenXmlUnknownElement("mc", "Fallback", mcNs);
+                var fbPic = new OpenXmlUnknownElement("p", "pic", pNs);
+                fbPic.AddNamespaceDeclaration("a", aNs);
+                fbPic.AddNamespaceDeclaration("r", rNs);
+
+                var fbNvPicPr = new OpenXmlUnknownElement("p", "nvPicPr", pNs);
+                var fbCNvPr = new OpenXmlUnknownElement("p", "cNvPr", pNs);
+                fbCNvPr.SetAttribute(new OpenXmlAttribute("", "id", null!, zmShapeId.ToString()));
+                fbCNvPr.SetAttribute(new OpenXmlAttribute("", "name", null!, zmName));
+                var hlinkClick = new OpenXmlUnknownElement("a", "hlinkClick", aNs);
+                hlinkClick.SetAttribute(new OpenXmlAttribute("r", "id", rNs, zmSlideRelId));
+                hlinkClick.SetAttribute(new OpenXmlAttribute("", "action", null!, "ppaction://hlinksldjump"));
+                fbCNvPr.AppendChild(hlinkClick);
+                // Same creationId
+                var fbExtLst = new OpenXmlUnknownElement("a", "extLst", aNs);
+                var fbExt = new OpenXmlUnknownElement("a", "ext", aNs);
+                fbExt.SetAttribute(new OpenXmlAttribute("", "uri", null!, "{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}"));
+                var fbCreationId = new OpenXmlUnknownElement("a16", "creationId", a16Ns);
+                fbCreationId.SetAttribute(new OpenXmlAttribute("", "id", null!, zmCreationId));
+                fbExt.AppendChild(fbCreationId);
+                fbExtLst.AppendChild(fbExt);
+                fbCNvPr.AppendChild(fbExtLst);
+                fbNvPicPr.AppendChild(fbCNvPr);
+
+                var fbCNvPicPr = new OpenXmlUnknownElement("p", "cNvPicPr", pNs);
+                var picLocks = new OpenXmlUnknownElement("a", "picLocks", aNs);
+                foreach (var lockAttr in new[] { "noGrp", "noRot", "noChangeAspect", "noMove", "noResize",
+                    "noEditPoints", "noAdjustHandles", "noChangeArrowheads", "noChangeShapeType" })
+                    picLocks.SetAttribute(new OpenXmlAttribute("", lockAttr, null!, "1"));
+                fbCNvPicPr.AppendChild(picLocks);
+                fbNvPicPr.AppendChild(fbCNvPicPr);
+                fbNvPicPr.AppendChild(new OpenXmlUnknownElement("p", "nvPr", pNs));
+                fbPic.AppendChild(fbNvPicPr);
+
+                // Fallback blipFill
+                var fbBlipFill = new OpenXmlUnknownElement("p", "blipFill", pNs);
+                var fbBlip = new OpenXmlUnknownElement("a", "blip", aNs);
+                fbBlip.SetAttribute(new OpenXmlAttribute("r", "embed", rNs, zmImageRelId));
+                fbBlipFill.AppendChild(fbBlip);
+                var fbStretch = new OpenXmlUnknownElement("a", "stretch", aNs);
+                fbStretch.AppendChild(new OpenXmlUnknownElement("a", "fillRect", aNs));
+                fbBlipFill.AppendChild(fbStretch);
+                fbPic.AppendChild(fbBlipFill);
+
+                // Fallback spPr
+                var fbSpPr = new OpenXmlUnknownElement("p", "spPr", pNs);
+                var fbXfrm = new OpenXmlUnknownElement("a", "xfrm", aNs);
+                var fbOff = new OpenXmlUnknownElement("a", "off", aNs);
+                fbOff.SetAttribute(new OpenXmlAttribute("", "x", null!, zmX.ToString()));
+                fbOff.SetAttribute(new OpenXmlAttribute("", "y", null!, zmY.ToString()));
+                var fbExtSz = new OpenXmlUnknownElement("a", "ext", aNs);
+                fbExtSz.SetAttribute(new OpenXmlAttribute("", "cx", null!, zmCx.ToString()));
+                fbExtSz.SetAttribute(new OpenXmlAttribute("", "cy", null!, zmCy.ToString()));
+                fbXfrm.AppendChild(fbOff);
+                fbXfrm.AppendChild(fbExtSz);
+                fbSpPr.AppendChild(fbXfrm);
+                var fbGeom = new OpenXmlUnknownElement("a", "prstGeom", aNs);
+                fbGeom.SetAttribute(new OpenXmlAttribute("", "prst", null!, "rect"));
+                fbGeom.AppendChild(new OpenXmlUnknownElement("a", "avLst", aNs));
+                fbSpPr.AppendChild(fbGeom);
+                var fbLn = new OpenXmlUnknownElement("a", "ln", aNs);
+                fbLn.SetAttribute(new OpenXmlAttribute("", "w", null!, "3175"));
+                var fbLnFill = new OpenXmlUnknownElement("a", "solidFill", aNs);
+                var fbLnClr = new OpenXmlUnknownElement("a", "prstClr", aNs);
+                fbLnClr.SetAttribute(new OpenXmlAttribute("", "val", null!, "ltGray"));
+                fbLnFill.AppendChild(fbLnClr);
+                fbLn.AppendChild(fbLnFill);
+                fbSpPr.AppendChild(fbLn);
+                fbPic.AppendChild(fbSpPr);
+
+                fallbackElement.AppendChild(fbPic);
+
+                acElement.AppendChild(choiceElement);
+                acElement.AppendChild(fallbackElement);
+                zmShapeTree.AppendChild(acElement);
+                GetSlide(zmSlidePart).Save();
+
+                var zmCount = zmShapeTree.Elements<OpenXmlUnknownElement>()
+                    .Count(e => e.LocalName == "AlternateContent");
+                return $"/slide[{zmSlideIdx}]/zoom[{zmCount}]";
+            }
+
             default:
             {
                 // Try resolving logical paths (table/placeholder) first
@@ -1528,7 +1798,7 @@ public partial class PowerPointHandler
                     var fbSlideIdx = allSegments[0].Index!.Value;
                     var fbSlideParts = GetSlideParts().ToList();
                     if (fbSlideIdx < 1 || fbSlideIdx > fbSlideParts.Count)
-                        throw new ArgumentException($"Slide {fbSlideIdx} not found");
+                        throw new ArgumentException($"Slide {fbSlideIdx} not found (total: {fbSlideParts.Count})");
 
                     fbSlidePart = fbSlideParts[fbSlideIdx - 1];
                     fbParent = GetSlide(fbSlidePart);
@@ -1575,7 +1845,7 @@ public partial class PowerPointHandler
 
             var slideIds = slideIdList.Elements<SlideId>().ToList();
             if (slideIdx < 1 || slideIdx > slideIds.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideIds.Count})");
 
             var slideId = slideIds[slideIdx - 1];
             var relId = slideId.RelationshipId?.Value;
@@ -1589,7 +1859,7 @@ public partial class PowerPointHandler
         // Remove element from slide
         var slideParts = GetSlideParts().ToList();
         if (slideIdx < 1 || slideIdx > slideParts.Count)
-            throw new ArgumentException($"Slide {slideIdx} not found");
+            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
 
         var slidePart = slideParts[slideIdx - 1];
         var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -1677,9 +1947,37 @@ public partial class PowerPointHandler
             }
             group.Remove();
         }
+        else if (elementType is "zoom" or "slidezoom")
+        {
+            var zoomElements = GetZoomElements(shapeTree);
+            if (elementIdx < 1 || elementIdx > zoomElements.Count)
+                throw new ArgumentException($"Zoom {elementIdx} not found (total: {zoomElements.Count})");
+            var zmAc = zoomElements[elementIdx - 1];
+            // Clean up image relationship if not referenced by other elements
+            var zmBlip = zmAc.Descendants().FirstOrDefault(d => d.LocalName == "blip");
+            if (zmBlip != null)
+            {
+                var rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+                var embedAttr = zmBlip.GetAttribute("embed", rNs);
+                if (!string.IsNullOrEmpty(embedAttr.Value))
+                {
+                    var relId = embedAttr.Value;
+                    // Check if any other element references this image
+                    zmAc.Remove();
+                    var slideXml = GetSlide(slidePart).OuterXml;
+                    if (!slideXml.Contains(relId))
+                    {
+                        try { slidePart.DeletePart(relId); } catch { }
+                    }
+                    GetSlide(slidePart).Save();
+                    return;
+                }
+            }
+            zmAc.Remove();
+        }
         else
         {
-            throw new ArgumentException($"Unknown element type: {elementType}. Supported: shape, picture, video, audio, table, chart, connector/connection, group");
+            throw new ArgumentException($"Unknown element type: {elementType}. Supported: shape, picture, video, audio, table, chart, connector/connection, group, zoom");
         }
 
         GetSlide(slidePart).Save();
@@ -1702,7 +2000,7 @@ public partial class PowerPointHandler
                 ?? throw new InvalidOperationException("No slides");
             var slideIds = slideIdList.Elements<SlideId>().ToList();
             if (slideIdx < 1 || slideIdx > slideIds.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideIds.Count})");
 
             var slideId = slideIds[slideIdx - 1];
             slideId.Remove();
@@ -1751,7 +2049,7 @@ public partial class PowerPointHandler
                 throw new ArgumentException($"Target must be a slide: /slide[N]");
             var tgtSlideIdx = int.Parse(tgtSlideMatch.Groups[1].Value);
             if (tgtSlideIdx < 1 || tgtSlideIdx > slideParts.Count)
-                throw new ArgumentException($"Slide {tgtSlideIdx} not found");
+                throw new ArgumentException($"Slide {tgtSlideIdx} not found (total: {slideParts.Count})");
             tgtSlidePart = slideParts[tgtSlideIdx - 1];
             tgtShapeTree = GetSlide(tgtSlidePart).CommonSlideData?.ShapeTree
                 ?? throw new InvalidOperationException("Slide has no shape tree");
@@ -1790,8 +2088,8 @@ public partial class PowerPointHandler
             var slideIds = slideIdList.Elements<SlideId>().ToList();
             var idx1 = int.Parse(slide1Match.Groups[1].Value);
             var idx2 = int.Parse(slide2Match.Groups[1].Value);
-            if (idx1 < 1 || idx1 > slideIds.Count) throw new ArgumentException($"Slide {idx1} not found");
-            if (idx2 < 1 || idx2 > slideIds.Count) throw new ArgumentException($"Slide {idx2} not found");
+            if (idx1 < 1 || idx1 > slideIds.Count) throw new ArgumentException($"Slide {idx1} not found (total: {slideIds.Count})");
+            if (idx2 < 1 || idx2 > slideIds.Count) throw new ArgumentException($"Slide {idx2} not found (total: {slideIds.Count})");
             if (idx1 == idx2) return (path1, path2);
 
             SwapXmlElements(slideIds[idx1 - 1], slideIds[idx2 - 1]);
@@ -1878,7 +2176,7 @@ public partial class PowerPointHandler
             throw new ArgumentException($"Target must be a slide: /slide[N]");
         var tgtSlideIdx = int.Parse(tgtSlideMatch.Groups[1].Value);
         if (tgtSlideIdx < 1 || tgtSlideIdx > slideParts.Count)
-            throw new ArgumentException($"Slide {tgtSlideIdx} not found");
+            throw new ArgumentException($"Slide {tgtSlideIdx} not found (total: {slideParts.Count})");
 
         var tgtSlidePart = slideParts[tgtSlideIdx - 1];
         var tgtShapeTree = GetSlide(tgtSlidePart).CommonSlideData?.ShapeTree
@@ -1903,7 +2201,7 @@ public partial class PowerPointHandler
     {
         var srcSlideIdx = int.Parse(slideMatch.Groups[1].Value);
         if (srcSlideIdx < 1 || srcSlideIdx > slideParts.Count)
-            throw new ArgumentException($"Slide {srcSlideIdx} not found");
+            throw new ArgumentException($"Slide {srcSlideIdx} not found (total: {slideParts.Count})");
 
         var srcSlidePart = slideParts[srcSlideIdx - 1];
         var presentationPart = _doc.PresentationPart
@@ -2059,7 +2357,7 @@ public partial class PowerPointHandler
 
         var slideIdx = int.Parse(match.Groups[1].Value);
         if (slideIdx < 1 || slideIdx > slideParts.Count)
-            throw new ArgumentException($"Slide {slideIdx} not found");
+            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
 
         var slidePart = slideParts[slideIdx - 1];
         var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree

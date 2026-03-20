@@ -142,7 +142,7 @@ public partial class PowerPointHandler
                         rProps.RemoveAllChildren<Drawing.SolidFill>();
                         rProps.RemoveAllChildren<Drawing.GradientFill>();
                         rProps.RemoveAllChildren<Drawing.NoFill>();
-                        rProps.AppendChild(newTextFill.CloneNode(true));
+                        InsertFillInRunProperties(rProps, newTextFill.CloneNode(true));
                     }
                     break;
                 }
@@ -304,7 +304,13 @@ public partial class PowerPointHandler
                         // Format: "M x,y L x,y L x,y C x1,y1 x2,y2 x,y Z" (SVG-like path syntax)
                         spPr.RemoveAllChildren<Drawing.PresetGeometry>();
                         spPr.RemoveAllChildren<Drawing.CustomGeometry>();
-                        spPr.AppendChild(ParseCustomGeometry(value));
+                        // Insert after xfrm (OOXML requires geometry before fill/line)
+                        var xfrm = spPr.GetFirstChild<Drawing.Transform2D>();
+                        var custGeom = ParseCustomGeometry(value);
+                        if (xfrm != null)
+                            xfrm.InsertAfterSelf(custGeom);
+                        else
+                            spPr.PrependChild(custGeom);
                     }
                     break;
                 }
@@ -329,7 +335,7 @@ public partial class PowerPointHandler
                     var spPr = shape.ShapeProperties;
                     if (spPr == null) { unsupported.Add(key); break; }
                     var outline = EnsureOutline(spPr);
-                    outline.Width = Core.EmuConverter.ParseEmuAsInt(value);
+                    outline.Width = Core.EmuConverter.ParseLineWidth(value);
                     break;
                 }
 
@@ -567,7 +573,10 @@ public partial class PowerPointHandler
                 {
                     var spPr = shape.ShapeProperties;
                     if (spPr == null) { unsupported.Add(key); break; }
-                    ApplyShadow(spPr, value);
+                    if (IsNoFillShape(spPr) && runs.Count > 0)
+                        foreach (var run in runs) ApplyTextShadow(run, value);
+                    else
+                        ApplyShadow(spPr, value);
                     break;
                 }
 
@@ -575,7 +584,10 @@ public partial class PowerPointHandler
                 {
                     var spPr = shape.ShapeProperties;
                     if (spPr == null) { unsupported.Add(key); break; }
-                    ApplyGlow(spPr, value);
+                    if (IsNoFillShape(spPr) && runs.Count > 0)
+                        foreach (var run in runs) ApplyTextGlow(run, value);
+                    else
+                        ApplyGlow(spPr, value);
                     break;
                 }
 
@@ -583,7 +595,10 @@ public partial class PowerPointHandler
                 {
                     var spPr = shape.ShapeProperties;
                     if (spPr == null) { unsupported.Add(key); break; }
-                    ApplyReflection(spPr, value);
+                    if (IsNoFillShape(spPr) && runs.Count > 0)
+                        foreach (var run in runs) ApplyTextReflection(run, value);
+                    else
+                        ApplyReflection(spPr, value);
                     break;
                 }
 
@@ -591,7 +606,10 @@ public partial class PowerPointHandler
                 {
                     var spPr = shape.ShapeProperties;
                     if (spPr == null) { unsupported.Add(key); break; }
-                    ApplySoftEdge(spPr, value);
+                    if (IsNoFillShape(spPr) && runs.Count > 0)
+                        foreach (var run in runs) ApplyTextSoftEdge(run, value);
+                    else
+                        ApplySoftEdge(spPr, value);
                     break;
                 }
 

@@ -87,7 +87,7 @@ public partial class PowerPointHandler
             {
                 var masters = presentationPart.SlideMasterParts.ToList();
                 if (partIdx < 1 || partIdx > masters.Count)
-                    throw new ArgumentException($"SlideMaster {partIdx} not found");
+                    throw new ArgumentException($"SlideMaster {partIdx} not found (total: {masters.Count})");
                 rootEl = masters[partIdx - 1].SlideMaster
                     ?? throw new InvalidOperationException("Corrupt slide master");
             }
@@ -96,7 +96,7 @@ public partial class PowerPointHandler
                 var layouts = presentationPart.SlideMasterParts
                     .SelectMany(m => m.SlideLayoutParts).ToList();
                 if (partIdx < 1 || partIdx > layouts.Count)
-                    throw new ArgumentException($"SlideLayout {partIdx} not found");
+                    throw new ArgumentException($"SlideLayout {partIdx} not found (total: {layouts.Count})");
                 rootEl = layouts[partIdx - 1].SlideLayout
                     ?? throw new InvalidOperationException("Corrupt slide layout");
             }
@@ -149,7 +149,7 @@ public partial class PowerPointHandler
             var slideIdx = int.Parse(notesSetMatch.Groups[1].Value);
             var slidePartsN = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slidePartsN.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slidePartsN.Count})");
             var notesPart = EnsureNotesSlidePart(slidePartsN[slideIdx - 1]);
             var unsupportedN = new List<string>();
             foreach (var (key, value) in properties)
@@ -394,7 +394,7 @@ public partial class PowerPointHandler
 
             var slideParts2 = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slideParts2.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts2.Count})");
 
             var slidePart = slideParts2[slideIdx - 1];
             var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -528,7 +528,7 @@ public partial class PowerPointHandler
 
             var slideParts2 = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slideParts2.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts2.Count})");
             var slidePart = slideParts2[slideIdx - 1];
             var shape = ResolvePlaceholderShape(slidePart, phId);
 
@@ -548,7 +548,7 @@ public partial class PowerPointHandler
 
             var slideParts4 = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slideParts4.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts4.Count})");
 
             var slidePart = slideParts4[slideIdx - 1];
             var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -650,7 +650,7 @@ public partial class PowerPointHandler
 
             var slideParts3 = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slideParts3.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts3.Count})");
 
             var slidePart = slideParts3[slideIdx - 1];
             var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -778,7 +778,7 @@ public partial class PowerPointHandler
             var slideIdx = int.Parse(slideOnlyMatch.Groups[1].Value);
             var slideParts2 = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slideParts2.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts2.Count})");
             var slidePart2 = slideParts2[slideIdx - 1];
             var slide2 = GetSlide(slidePart2);
 
@@ -836,6 +836,138 @@ public partial class PowerPointHandler
                 }
             }
             slide2.Save();
+            return unsupported;
+        }
+
+        // Try zoom-level path: /slide[N]/zoom[M]
+        var zoomSetMatch = Regex.Match(path, @"^/slide\[(\d+)\]/zoom\[(\d+)\]$");
+        if (zoomSetMatch.Success)
+        {
+            var slideIdx = int.Parse(zoomSetMatch.Groups[1].Value);
+            var zmIdx = int.Parse(zoomSetMatch.Groups[2].Value);
+            var zmSlideParts = GetSlideParts().ToList();
+            if (slideIdx < 1 || slideIdx > zmSlideParts.Count)
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {zmSlideParts.Count})");
+            var zmSlidePart = zmSlideParts[slideIdx - 1];
+            var zmShapeTree = GetSlide(zmSlidePart).CommonSlideData?.ShapeTree
+                ?? throw new InvalidOperationException("Slide has no shape tree");
+            var zoomElements = GetZoomElements(zmShapeTree);
+            if (zmIdx < 1 || zmIdx > zoomElements.Count)
+                throw new ArgumentException($"Zoom {zmIdx} not found (total: {zoomElements.Count})");
+
+            var acElement = zoomElements[zmIdx - 1];
+            var choice = acElement.ChildElements.FirstOrDefault(e => e.LocalName == "Choice");
+            var fallback = acElement.ChildElements.FirstOrDefault(e => e.LocalName == "Fallback");
+            var gf = choice?.ChildElements.FirstOrDefault(e => e.LocalName == "graphicFrame");
+            var sldZmObj = acElement.Descendants().FirstOrDefault(d => d.LocalName == "sldZmObj");
+            var zmPr = acElement.Descendants().FirstOrDefault(d => d.LocalName == "zmPr");
+
+            var unsupported = new List<string>();
+            foreach (var (key, value) in properties)
+            {
+                switch (key.ToLowerInvariant())
+                {
+                    case "target" or "slide":
+                    {
+                        if (!int.TryParse(value, out var targetNum))
+                            throw new ArgumentException($"Invalid target value: '{value}'. Expected a slide number.");
+                        if (targetNum < 1 || targetNum > zmSlideParts.Count)
+                            throw new ArgumentException($"Target slide {targetNum} not found (total: {zmSlideParts.Count})");
+                        var zmPresentation = _doc.PresentationPart?.Presentation
+                            ?? throw new InvalidOperationException("No presentation");
+                        var zmSlideIds = zmPresentation.GetFirstChild<SlideIdList>()
+                            ?.Elements<SlideId>().ToList()
+                            ?? throw new InvalidOperationException("No slides");
+                        var newSldId = zmSlideIds[targetNum - 1].Id!.Value;
+                        sldZmObj?.SetAttribute(new OpenXmlAttribute("", "sldId", null!, newSldId.ToString()));
+
+                        // Update fallback hyperlink relationship
+                        var fbPic = fallback?.ChildElements.FirstOrDefault(e => e.LocalName == "pic");
+                        var fbCNvPr = fbPic?.Descendants().FirstOrDefault(d => d.LocalName == "cNvPr");
+                        var hlinkClick = fbCNvPr?.ChildElements.FirstOrDefault(e => e.LocalName == "hlinkClick");
+                        if (hlinkClick != null)
+                        {
+                            var rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+                            var targetSlidePart = zmSlideParts[targetNum - 1];
+                            var newRelId = zmSlidePart.CreateRelationshipToPart(targetSlidePart);
+                            hlinkClick.SetAttribute(new OpenXmlAttribute("r", "id", rNs, newRelId));
+                        }
+                        break;
+                    }
+                    case "returntoparent":
+                        zmPr?.SetAttribute(new OpenXmlAttribute("", "returnToParent", null!, IsTruthy(value) ? "1" : "0"));
+                        break;
+                    case "transitiondur":
+                        zmPr?.SetAttribute(new OpenXmlAttribute("", "transitionDur", null!, value));
+                        break;
+                    case "x" or "y" or "width" or "height":
+                    {
+                        var emu = ParseEmu(value);
+                        // Update graphicFrame xfrm
+                        var gfXfrm = gf?.ChildElements.FirstOrDefault(e => e.LocalName == "xfrm");
+                        if (gfXfrm != null)
+                        {
+                            if (key.ToLowerInvariant() is "x" or "y")
+                            {
+                                var off = gfXfrm.ChildElements.FirstOrDefault(e => e.LocalName == "off");
+                                off?.SetAttribute(new OpenXmlAttribute("", key.ToLowerInvariant(), null!, emu.ToString()));
+                            }
+                            else
+                            {
+                                var ext = gfXfrm.ChildElements.FirstOrDefault(e => e.LocalName == "ext");
+                                var attrName = key.ToLowerInvariant() == "width" ? "cx" : "cy";
+                                ext?.SetAttribute(new OpenXmlAttribute("", attrName, null!, emu.ToString()));
+                            }
+                        }
+                        // Update fallback spPr xfrm
+                        var fbPic = fallback?.ChildElements.FirstOrDefault(e => e.LocalName == "pic");
+                        var fbSpPr = fbPic?.ChildElements.FirstOrDefault(e => e.LocalName == "spPr");
+                        var fbXfrm = fbSpPr?.ChildElements.FirstOrDefault(e => e.LocalName == "xfrm");
+                        if (fbXfrm != null)
+                        {
+                            if (key.ToLowerInvariant() is "x" or "y")
+                            {
+                                var off = fbXfrm.ChildElements.FirstOrDefault(e => e.LocalName == "off");
+                                off?.SetAttribute(new OpenXmlAttribute("", key.ToLowerInvariant(), null!, emu.ToString()));
+                            }
+                            else
+                            {
+                                var ext = fbXfrm.ChildElements.FirstOrDefault(e => e.LocalName == "ext");
+                                var attrName = key.ToLowerInvariant() == "width" ? "cx" : "cy";
+                                ext?.SetAttribute(new OpenXmlAttribute("", attrName, null!, emu.ToString()));
+                            }
+                        }
+                        // Update inner zmPr > spPr > xfrm (only for width/height)
+                        if (key.ToLowerInvariant() is "width" or "height")
+                        {
+                            var p166Ns = "http://schemas.microsoft.com/office/powerpoint/2016/6/main";
+                            var zmSpPr = zmPr?.ChildElements.FirstOrDefault(e => e.LocalName == "spPr" && e.NamespaceUri == p166Ns);
+                            var zmSpXfrm = zmSpPr?.ChildElements.FirstOrDefault(e => e.LocalName == "xfrm");
+                            var zmSpExt = zmSpXfrm?.ChildElements.FirstOrDefault(e => e.LocalName == "ext");
+                            var attrName = key.ToLowerInvariant() == "width" ? "cx" : "cy";
+                            zmSpExt?.SetAttribute(new OpenXmlAttribute("", attrName, null!, emu.ToString()));
+                        }
+                        break;
+                    }
+                    case "name":
+                    {
+                        // Update cNvPr name in Choice
+                        var nvGfPr = gf?.ChildElements.FirstOrDefault(e => e.LocalName == "nvGraphicFramePr");
+                        var choiceCNvPr = nvGfPr?.ChildElements.FirstOrDefault(e => e.LocalName == "cNvPr");
+                        choiceCNvPr?.SetAttribute(new OpenXmlAttribute("", "name", null!, value));
+                        // Update cNvPr name in Fallback
+                        var fbPic = fallback?.ChildElements.FirstOrDefault(e => e.LocalName == "pic");
+                        var fbNvPicPr = fbPic?.ChildElements.FirstOrDefault(e => e.LocalName == "nvPicPr");
+                        var fbCNvPr = fbNvPicPr?.ChildElements.FirstOrDefault(e => e.LocalName == "cNvPr");
+                        fbCNvPr?.SetAttribute(new OpenXmlAttribute("", "name", null!, value));
+                        break;
+                    }
+                    default:
+                        unsupported.Add(key);
+                        break;
+                }
+            }
+            GetSlide(zmSlidePart).Save();
             return unsupported;
         }
 
@@ -905,7 +1037,7 @@ public partial class PowerPointHandler
 
             var slideParts5 = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slideParts5.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts5.Count})");
 
             var slidePart = slideParts5[slideIdx - 1];
             var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -945,7 +1077,7 @@ public partial class PowerPointHandler
                         var spPr = cxn.ShapeProperties ?? (cxn.ShapeProperties = new ShapeProperties());
                         var outline = spPr.GetFirstChild<Drawing.Outline>()
                             ?? spPr.AppendChild(new Drawing.Outline());
-                        outline.Width = (int)ParseEmu(value);
+                        outline.Width = Core.EmuConverter.ParseLineWidth(value);
                         break;
                     }
                     case "linecolor" or "line.color":
@@ -1037,7 +1169,7 @@ public partial class PowerPointHandler
 
             var slideParts6 = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slideParts6.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts6.Count})");
 
             var slidePart = slideParts6[slideIdx - 1];
             var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -1122,7 +1254,7 @@ public partial class PowerPointHandler
                 var fbSlideIdx = allSegments[0].Index!.Value;
                 var fbSlideParts = GetSlideParts().ToList();
                 if (fbSlideIdx < 1 || fbSlideIdx > fbSlideParts.Count)
-                    throw new ArgumentException($"Slide {fbSlideIdx} not found");
+                    throw new ArgumentException($"Slide {fbSlideIdx} not found (total: {fbSlideParts.Count})");
 
                 fbSlidePart = fbSlideParts[fbSlideIdx - 1];
                 var remaining = allSegments.Skip(1).ToList();

@@ -243,6 +243,178 @@ public partial class PowerPointHandler
     private static string FormatEmu(long emu) => Core.EmuConverter.FormatEmu(emu);
 
     /// <summary>
+    /// Generate a minimal 1x1 light-gray PNG for use as a zoom placeholder.
+    /// PowerPoint regenerates the actual slide thumbnail when the file is opened.
+    /// </summary>
+    private static byte[] GenerateZoomPlaceholderPng()
+    {
+        // Minimal valid 1x1 PNG (RGBA: light gray #D0D0D0, fully opaque)
+        using var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+
+        // PNG signature
+        bw.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+
+        // IHDR chunk: 1x1, 8-bit RGBA
+        WriteChunk(bw, "IHDR", new byte[] {
+            0, 0, 0, 1, // width = 1
+            0, 0, 0, 1, // height = 1
+            8,           // bit depth
+            6,           // color type = RGBA
+            0, 0, 0      // compression, filter, interlace
+        });
+
+        // IDAT chunk: zlib-compressed pixel data (filter=0, R=0xD0, G=0xD0, B=0xD0, A=0xFF)
+        // Pre-computed deflate of [0x00, 0xD0, 0xD0, 0xD0, 0xFF]
+        WriteChunk(bw, "IDAT", new byte[] {
+            0x78, 0x01, 0x62, 0x60, 0x60, 0x28, 0x61, 0x28,
+            0x61, 0x68, 0xF8, 0x0F, 0x00, 0x01, 0x45, 0x00, 0xC5
+        });
+
+        // IEND chunk
+        WriteChunk(bw, "IEND", Array.Empty<byte>());
+
+        return ms.ToArray();
+    }
+
+    private static void WriteChunk(BinaryWriter bw, string type, byte[] data)
+    {
+        // Length (big-endian)
+        var lenBytes = BitConverter.GetBytes(data.Length);
+        if (BitConverter.IsLittleEndian) Array.Reverse(lenBytes);
+        bw.Write(lenBytes);
+
+        // Type
+        var typeBytes = System.Text.Encoding.ASCII.GetBytes(type);
+        bw.Write(typeBytes);
+
+        // Data
+        bw.Write(data);
+
+        // CRC32 over type + data
+        var crcData = new byte[4 + data.Length];
+        Array.Copy(typeBytes, 0, crcData, 0, 4);
+        Array.Copy(data, 0, crcData, 4, data.Length);
+        var crc = Crc32(crcData);
+        var crcBytes = BitConverter.GetBytes(crc);
+        if (BitConverter.IsLittleEndian) Array.Reverse(crcBytes);
+        bw.Write(crcBytes);
+    }
+
+    private static uint Crc32(byte[] data)
+    {
+        uint crc = 0xFFFFFFFF;
+        foreach (var b in data)
+        {
+            crc ^= b;
+            for (int i = 0; i < 8; i++)
+                crc = (crc >> 1) ^ (crc & 1) * 0xEDB88320;
+        }
+        return ~crc;
+    }
+
+    /// <summary>
+    /// Find all zoom AlternateContent elements in a shape tree.
+    /// </summary>
+    private static List<OpenXmlElement> GetZoomElements(ShapeTree shapeTree)
+    {
+        return shapeTree.ChildElements
+            .Where(e => e.LocalName == "AlternateContent" &&
+                   e.Descendants().Any(d => d.LocalName == "sldZm"))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Convert a SlideId value to 1-based slide number.
+    /// </summary>
+    private int SlideIdToNumber(uint sldId)
+    {
+        var slideIds = _doc.PresentationPart?.Presentation?.GetFirstChild<SlideIdList>()
+            ?.Elements<SlideId>().ToList();
+        if (slideIds == null) return -1;
+        for (int i = 0; i < slideIds.Count; i++)
+            if (slideIds[i].Id?.Value == sldId) return i + 1;
+        return -1;
+    }
+
+    /// <summary>
+    /// Build a DocumentNode from a zoom AlternateContent element.
+    /// </summary>
+    private DocumentNode ZoomToNode(OpenXmlElement acElement, int slideNum, int zoomIdx)
+    {
+        var node = new DocumentNode
+        {
+            Path = $"/slide[{slideNum}]/zoom[{zoomIdx}]",
+            Type = "zoom"
+        };
+
+        // Navigate: mc:Choice > p:graphicFrame
+        var choice = acElement.ChildElements.FirstOrDefault(e => e.LocalName == "Choice");
+        var gf = choice?.ChildElements.FirstOrDefault(e => e.LocalName == "graphicFrame");
+
+        // Name from cNvPr
+        var nvGfPr = gf?.ChildElements.FirstOrDefault(e => e.LocalName == "nvGraphicFramePr");
+        var cNvPr = nvGfPr?.ChildElements.FirstOrDefault(e => e.LocalName == "cNvPr");
+        if (cNvPr != null)
+        {
+            var nameAttr = cNvPr.GetAttribute("name", "");
+            if (!string.IsNullOrEmpty(nameAttr.Value))
+                node.Format["name"] = nameAttr.Value;
+        }
+
+        // Position from xfrm
+        var xfrm = gf?.ChildElements.FirstOrDefault(e => e.LocalName == "xfrm");
+        if (xfrm != null)
+        {
+            var off = xfrm.ChildElements.FirstOrDefault(e => e.LocalName == "off");
+            var ext = xfrm.ChildElements.FirstOrDefault(e => e.LocalName == "ext");
+            if (off != null)
+            {
+                var xAttr = off.GetAttribute("x", "");
+                var yAttr = off.GetAttribute("y", "");
+                if (!string.IsNullOrEmpty(xAttr.Value) && long.TryParse(xAttr.Value, out var x))
+                    node.Format["x"] = FormatEmu(x);
+                if (!string.IsNullOrEmpty(yAttr.Value) && long.TryParse(yAttr.Value, out var y))
+                    node.Format["y"] = FormatEmu(y);
+            }
+            if (ext != null)
+            {
+                var cxAttr = ext.GetAttribute("cx", "");
+                var cyAttr = ext.GetAttribute("cy", "");
+                if (!string.IsNullOrEmpty(cxAttr.Value) && long.TryParse(cxAttr.Value, out var cx))
+                    node.Format["width"] = FormatEmu(cx);
+                if (!string.IsNullOrEmpty(cyAttr.Value) && long.TryParse(cyAttr.Value, out var cy))
+                    node.Format["height"] = FormatEmu(cy);
+            }
+        }
+
+        // Zoom properties from sldZmObj / zmPr
+        var sldZmObj = acElement.Descendants().FirstOrDefault(d => d.LocalName == "sldZmObj");
+        if (sldZmObj != null)
+        {
+            var sldIdAttr = sldZmObj.GetAttribute("sldId", "");
+            if (!string.IsNullOrEmpty(sldIdAttr.Value) && uint.TryParse(sldIdAttr.Value, out var sldId))
+            {
+                var targetNum = SlideIdToNumber(sldId);
+                if (targetNum > 0) node.Format["target"] = targetNum;
+            }
+        }
+
+        var zmPr = acElement.Descendants().FirstOrDefault(d => d.LocalName == "zmPr");
+        if (zmPr != null)
+        {
+            var rtpAttr = zmPr.GetAttribute("returnToParent", "");
+            if (!string.IsNullOrEmpty(rtpAttr.Value))
+                node.Format["returnToParent"] = rtpAttr.Value;
+            var tdAttr = zmPr.GetAttribute("transitionDur", "");
+            if (!string.IsNullOrEmpty(tdAttr.Value))
+                node.Format["transitionDur"] = tdAttr.Value;
+        }
+
+        return node;
+    }
+
+    /// <summary>
     /// Read a GradientFill element and return a string representation (C1-C2[-angle] or radial:C1-C2[-focus]).
     /// </summary>
     internal static string ReadGradientString(Drawing.GradientFill gradFill)
@@ -301,8 +473,8 @@ public partial class PowerPointHandler
     /// Parse SVG-like path syntax into a Drawing.CustomGeometry element.
     /// Format: "M x,y L x,y C x1,y1 x2,y2 x,y Q x1,y1 x,y Z"
     ///   M = moveTo, L = lineTo, C = cubicBezTo, Q = quadBezTo, A = arcTo, Z = close
-    /// Coordinates are integers (EMU-scale, typically matching the shape's width/height).
-    /// Example: "M 0,0 L 100,0 L 100,100 L 0,100 Z" (rectangle in 100x100 space)
+    /// Coordinates use 0-100 relative space, internally scaled ×1000 to OOXML standard 0-100000.
+    /// Example: "M 0,0 L 100,0 L 100,100 L 0,100 Z" (rectangle in 0-100 space)
     /// </summary>
     private static Drawing.CustomGeometry ParseCustomGeometry(string value)
     {
@@ -383,6 +555,10 @@ public partial class PowerPointHandler
         );
     }
 
+    /// <summary>
+    /// Parse "x,y" coordinate token and scale ×1000 to OOXML standard 0-100000 range.
+    /// Input coordinates are 0-100 relative space.
+    /// </summary>
     private static (long x, long y) ParsePointToken(string token)
     {
         var parts = token.Split(',');
@@ -392,7 +568,8 @@ public partial class PowerPointHandler
             throw new ArgumentException($"Invalid x coordinate '{parts[0].Trim()}' in '{token}'. Expected a number.");
         if (!long.TryParse(parts[1].Trim(), out var y))
             throw new ArgumentException($"Invalid y coordinate '{parts[1].Trim()}' in '{token}'. Expected a number.");
-        return (x, y);
+        // Scale from user space (0-100) to OOXML standard (0-100000)
+        return (x * 1000, y * 1000);
     }
 
     private static void TrackMax(ref long maxX, ref long maxY, long x, long y)

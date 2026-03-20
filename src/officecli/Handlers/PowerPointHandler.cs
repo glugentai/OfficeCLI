@@ -27,7 +27,7 @@ public partial class PowerPointHandler : IDocumentHandler
     {
         var slideParts = GetSlideParts().ToList();
         if (slideIdx < 1 || slideIdx > slideParts.Count)
-            throw new ArgumentException($"Slide {slideIdx} not found");
+            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
 
         var slidePart = slideParts[slideIdx - 1];
         var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -44,7 +44,7 @@ public partial class PowerPointHandler : IDocumentHandler
     {
         var slideParts = GetSlideParts().ToList();
         if (slideIdx < 1 || slideIdx > slideParts.Count)
-            throw new ArgumentException($"Slide {slideIdx} not found");
+            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
 
         var slidePart = slideParts[slideIdx - 1];
         var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -66,7 +66,7 @@ public partial class PowerPointHandler : IDocumentHandler
     {
         var slideParts = GetSlideParts().ToList();
         if (slideIdx < 1 || slideIdx > slideParts.Count)
-            throw new ArgumentException($"Slide {slideIdx} not found");
+            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
 
         var slidePart = slideParts[slideIdx - 1];
         var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
@@ -118,7 +118,7 @@ public partial class PowerPointHandler : IDocumentHandler
 
             var slideParts = GetSlideParts().ToList();
             if (slideIdx < 1 || slideIdx > slideParts.Count)
-                throw new ArgumentException($"Slide {slideIdx} not found");
+                throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
             var slidePart = slideParts[slideIdx - 1];
             OpenXmlElement current = ResolvePlaceholderShape(slidePart, phId);
 
@@ -474,7 +474,7 @@ public partial class PowerPointHandler : IDocumentHandler
             var idx = int.Parse(slideMatch.Groups[1].Value);
             var slideParts = GetSlideParts().ToList();
             if (idx < 1 || idx > slideParts.Count)
-                throw new ArgumentException($"Slide {idx} not found");
+                throw new ArgumentException($"Slide {idx} not found (total: {slideParts.Count})");
             rootElement = GetSlide(slideParts[idx - 1]);
         }
         else if (Regex.Match(partPath, @"^/slideMaster\[(\d+)\]$") is { Success: true } masterMatch)
@@ -482,7 +482,7 @@ public partial class PowerPointHandler : IDocumentHandler
             var idx = int.Parse(masterMatch.Groups[1].Value);
             var masters = presentationPart.SlideMasterParts.ToList();
             if (idx < 1 || idx > masters.Count)
-                throw new ArgumentException($"SlideMaster {idx} not found");
+                throw new ArgumentException($"SlideMaster {idx} not found (total: {masters.Count})");
             rootElement = masters[idx - 1].SlideMaster
                 ?? throw new InvalidOperationException("Corrupt file: slide master data missing");
         }
@@ -492,7 +492,7 @@ public partial class PowerPointHandler : IDocumentHandler
             var layouts = presentationPart.SlideMasterParts
                 .SelectMany(m => m.SlideLayoutParts).ToList();
             if (idx < 1 || idx > layouts.Count)
-                throw new ArgumentException($"SlideLayout {idx} not found");
+                throw new ArgumentException($"SlideLayout {idx} not found (total: {layouts.Count})");
             rootElement = layouts[idx - 1].SlideLayout
                 ?? throw new InvalidOperationException("Corrupt file: slide layout data missing");
         }
@@ -501,7 +501,7 @@ public partial class PowerPointHandler : IDocumentHandler
             var idx = int.Parse(noteMatch.Groups[1].Value);
             var slideParts = GetSlideParts().ToList();
             if (idx < 1 || idx > slideParts.Count)
-                throw new ArgumentException($"Slide {idx} not found");
+                throw new ArgumentException($"Slide {idx} not found (total: {slideParts.Count})");
             var notesPart = slideParts[idx - 1].NotesSlidePart
                 ?? throw new ArgumentException($"Slide {idx} has no notes");
             rootElement = notesPart.NotesSlide

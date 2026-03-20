@@ -62,7 +62,8 @@ public partial class PowerPointHandler
                         + (shapeTree?.Elements<Picture>().Count() ?? 0)
                         + (shapeTree?.Elements<GraphicFrame>().Count() ?? 0)
                         + (shapeTree?.Elements<ConnectionShape>().Count() ?? 0)
-                        + (shapeTree?.Elements<GroupShape>().Count() ?? 0);
+                        + (shapeTree?.Elements<GroupShape>().Count() ?? 0)
+                        + (shapeTree != null ? GetZoomElements(shapeTree).Count : 0);
                 }
 
                 node.Children.Add(slideNode);
@@ -84,7 +85,7 @@ public partial class PowerPointHandler
             var notesSlideIdx = int.Parse(notesGetMatch.Groups[1].Value);
             var slidePartsN = GetSlideParts().ToList();
             if (notesSlideIdx < 1 || notesSlideIdx > slidePartsN.Count)
-                throw new ArgumentException($"Slide {notesSlideIdx} not found");
+                throw new ArgumentException($"Slide {notesSlideIdx} not found (total: {slidePartsN.Count})");
             var slidePartN = slidePartsN[notesSlideIdx - 1];
             var notesText = slidePartN.NotesSlidePart != null
                 ? GetNotesText(slidePartN.NotesSlidePart) : "";
@@ -163,6 +164,24 @@ public partial class PowerPointHandler
                 }
             }
             return paraNode;
+        }
+
+        // Try zoom path: /slide[N]/zoom[M]
+        var zoomGetMatch = Regex.Match(path, @"^/slide\[(\d+)\]/zoom\[(\d+)\]$");
+        if (zoomGetMatch.Success)
+        {
+            var sIdx = int.Parse(zoomGetMatch.Groups[1].Value);
+            var zmIdx = int.Parse(zoomGetMatch.Groups[2].Value);
+            var zmSlideParts = GetSlideParts().ToList();
+            if (sIdx < 1 || sIdx > zmSlideParts.Count)
+                throw new ArgumentException($"Slide {sIdx} not found (total: {zmSlideParts.Count})");
+            var zmSlidePart = zmSlideParts[sIdx - 1];
+            var zmShapeTree = GetSlide(zmSlidePart).CommonSlideData?.ShapeTree
+                ?? throw new ArgumentException($"Slide {sIdx} has no shapes");
+            var zoomElements = GetZoomElements(zmShapeTree);
+            if (zmIdx < 1 || zmIdx > zoomElements.Count)
+                throw new ArgumentException($"Zoom {zmIdx} not found (total: {zoomElements.Count})");
+            return ZoomToNode(zoomElements[zmIdx - 1], sIdx, zmIdx);
         }
 
         // Try animation path: /slide[N]/shape[M]/animation[A]
@@ -355,7 +374,7 @@ public partial class PowerPointHandler
 
             var phSlideParts = GetSlideParts().ToList();
             if (phSlideIdx < 1 || phSlideIdx > phSlideParts.Count)
-                throw new ArgumentException($"Slide {phSlideIdx} not found");
+                throw new ArgumentException($"Slide {phSlideIdx} not found (total: {phSlideParts.Count})");
 
             var phSlidePart = phSlideParts[phSlideIdx - 1];
 
@@ -546,7 +565,7 @@ public partial class PowerPointHandler
                 or "equation" or "math" or "formula"
                 or "table" or "chart" or "placeholder" or "notes"
                 or "connector" or "connection"
-                or "group";
+                or "group" or "zoom";
         if (!isKnownType)
         {
             var genericParsed = GenericXmlQuery.ParseSelector(selector);
@@ -724,6 +743,25 @@ public partial class PowerPointHandler
                         if (MatchesGenericAttributes(grpNode, parsed.Attributes))
                             results.Add(grpNode);
                     }
+                }
+            }
+
+            if (parsed.ElementType == "zoom" || (parsed.ElementType == null && !isEquationSelector))
+            {
+                var zoomElements = GetZoomElements(shapeTree);
+                int zmIdx = 0;
+                foreach (var zmEl in zoomElements)
+                {
+                    zmIdx++;
+                    var zmNode = ZoomToNode(zmEl, slideNum, zmIdx);
+                    if (parsed.TextContains != null)
+                    {
+                        var zmName = zmNode.Format.ContainsKey("name") ? zmNode.Format["name"]?.ToString() ?? "" : "";
+                        if (!zmName.Contains(parsed.TextContains, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                    }
+                    if (MatchesGenericAttributes(zmNode, parsed.Attributes))
+                        results.Add(zmNode);
                 }
             }
 

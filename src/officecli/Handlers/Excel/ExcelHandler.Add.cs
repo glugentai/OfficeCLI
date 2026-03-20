@@ -751,6 +751,223 @@ public partial class ExcelHandler
                 return $"/{picSheetName}/picture[{picIdx}]";
             }
 
+            case "shape" or "textbox":
+            {
+                var shpSegments = parentPath.TrimStart('/').Split('/', 2);
+                var shpSheetName = shpSegments[0];
+                var shpWorksheet = FindWorksheet(shpSheetName)
+                    ?? throw new ArgumentException($"Sheet not found: {shpSheetName}");
+
+                var sxStr = properties.GetValueOrDefault("x", "1") ?? "1";
+                var syStr = properties.GetValueOrDefault("y", "1") ?? "1";
+                var swStr = properties.GetValueOrDefault("width", "5") ?? "5";
+                var shStr = properties.GetValueOrDefault("height", "3") ?? "3";
+                var sx = ParseHelpers.SafeParseInt(sxStr, "x");
+                var sy = ParseHelpers.SafeParseInt(syStr, "y");
+                var sw = ParseHelpers.SafeParseInt(swStr, "width");
+                var sh = ParseHelpers.SafeParseInt(shStr, "height");
+                var shpText = properties.GetValueOrDefault("text", "") ?? "";
+                var shpName = properties.GetValueOrDefault("name", "");
+
+                var shpDrawingsPart = shpWorksheet.DrawingsPart
+                    ?? shpWorksheet.AddNewPart<DrawingsPart>();
+
+                if (shpDrawingsPart.WorksheetDrawing == null)
+                {
+                    shpDrawingsPart.WorksheetDrawing = new XDR.WorksheetDrawing();
+                    shpDrawingsPart.WorksheetDrawing.Save();
+
+                    if (GetSheet(shpWorksheet).GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Drawing>() == null)
+                    {
+                        var drawingRelId = shpWorksheet.GetIdOfPart(shpDrawingsPart);
+                        GetSheet(shpWorksheet).Append(new DocumentFormat.OpenXml.Spreadsheet.Drawing { Id = drawingRelId });
+                        SaveWorksheet(shpWorksheet);
+                    }
+                }
+
+                var shpId = (uint)(shpDrawingsPart.WorksheetDrawing.Elements<XDR.TwoCellAnchor>().Count() + 1);
+                if (string.IsNullOrEmpty(shpName)) shpName = $"Shape {shpId}";
+
+                // Build ShapeProperties
+                var spPr = new XDR.ShapeProperties(
+                    new Drawing.Transform2D(
+                        new Drawing.Offset { X = 0, Y = 0 },
+                        new Drawing.Extents { Cx = 0, Cy = 0 }
+                    ),
+                    new Drawing.PresetGeometry(new Drawing.AdjustValueList()) { Preset = Drawing.ShapeTypeValues.Rectangle }
+                );
+
+                // Fill
+                if (properties.TryGetValue("fill", out var shpFill))
+                {
+                    if (shpFill.Equals("none", StringComparison.OrdinalIgnoreCase))
+                        spPr.AppendChild(new Drawing.NoFill());
+                    else
+                    {
+                        var (rgb, alpha) = ParseHelpers.SanitizeColorForOoxml(shpFill);
+                        var solidFill = new Drawing.SolidFill(new Drawing.RgbColorModelHex { Val = rgb });
+                        spPr.AppendChild(solidFill);
+                    }
+                }
+
+                // Line/border
+                if (properties.TryGetValue("line", out var shpLine))
+                {
+                    if (shpLine.Equals("none", StringComparison.OrdinalIgnoreCase))
+                        spPr.AppendChild(new Drawing.Outline(new Drawing.NoFill()));
+                    else
+                    {
+                        var (lRgb, _) = ParseHelpers.SanitizeColorForOoxml(shpLine);
+                        spPr.AppendChild(new Drawing.Outline(new Drawing.SolidFill(new Drawing.RgbColorModelHex { Val = lRgb })));
+                    }
+                }
+
+                // Effects (shadow, glow, reflection, softEdge) — shape-level only for shapes with fill
+                // For fill=none shapes, shadow/glow go to text-level (rPr) below
+                var isNoFillShape = properties.TryGetValue("fill", out var fillCheck) && fillCheck.Equals("none", StringComparison.OrdinalIgnoreCase);
+                Drawing.EffectList? shpEffectList = null;
+                Func<string, DocumentFormat.OpenXml.OpenXmlElement> colorBuilder = c =>
+                {
+                    var (rgb2, alpha2) = ParseHelpers.SanitizeColorForOoxml(c);
+                    var clr = new Drawing.RgbColorModelHex { Val = rgb2 };
+                    if (alpha2.HasValue) clr.AppendChild(new Drawing.Alpha { Val = alpha2.Value });
+                    return clr;
+                };
+                if (!isNoFillShape)
+                {
+                    if (properties.TryGetValue("shadow", out var shpShadow) && !shpShadow.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    {
+                        shpEffectList ??= new Drawing.EffectList();
+                        shpEffectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildOuterShadow(shpShadow.Replace(':', '-'), colorBuilder));
+                    }
+                    if (properties.TryGetValue("glow", out var shpGlow) && !shpGlow.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    {
+                        shpEffectList ??= new Drawing.EffectList();
+                        shpEffectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildGlow(shpGlow.Replace(':', '-'), colorBuilder));
+                    }
+                }
+                if (properties.TryGetValue("reflection", out var shpRefl) && !shpRefl.Equals("none", StringComparison.OrdinalIgnoreCase))
+                {
+                    shpEffectList ??= new Drawing.EffectList();
+                    shpEffectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildReflection(shpRefl));
+                }
+                if (properties.TryGetValue("softedge", out var shpSoft) && !shpSoft.Equals("none", StringComparison.OrdinalIgnoreCase))
+                {
+                    shpEffectList ??= new Drawing.EffectList();
+                    shpEffectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildSoftEdge(shpSoft));
+                }
+                if (shpEffectList != null)
+                    spPr.AppendChild(shpEffectList);
+
+                // Build TextBody with runs
+                var bodyPr = new Drawing.BodyProperties { Anchor = Drawing.TextAnchoringTypeValues.Center };
+                if (properties.TryGetValue("margin", out var shpMargin))
+                {
+                    var mEmu = (int)(ParseHelpers.SafeParseDouble(shpMargin, "margin") * 12700);
+                    bodyPr.LeftInset = mEmu; bodyPr.RightInset = mEmu;
+                    bodyPr.TopInset = mEmu; bodyPr.BottomInset = mEmu;
+                }
+                var txBody = new XDR.TextBody(bodyPr, new Drawing.ListStyle());
+
+                var lines = shpText.Replace("\\n", "\n").Split('\n');
+                foreach (var line in lines)
+                {
+                    var rPr = new Drawing.RunProperties { Language = "en-US" };
+
+                    // Schema order: attributes → solidFill → effectLst → latin/ea
+                    if (properties.TryGetValue("size", out var shpSize))
+                        rPr.FontSize = (int)Math.Round(ParseHelpers.SafeParseDouble(shpSize, "size") * 100);
+                    if (properties.TryGetValue("bold", out var shpBold) && IsTruthy(shpBold))
+                        rPr.Bold = true;
+                    if (properties.TryGetValue("italic", out var shpItalic) && IsTruthy(shpItalic))
+                        rPr.Italic = true;
+
+                    // Fill (color) before fonts
+                    if (properties.TryGetValue("color", out var shpColor))
+                    {
+                        var (cRgb, _) = ParseHelpers.SanitizeColorForOoxml(shpColor);
+                        rPr.AppendChild(new Drawing.SolidFill(new Drawing.RgbColorModelHex { Val = cRgb }));
+                    }
+
+                    // Text-level effects for fill=none shapes
+                    var isNoFill = properties.TryGetValue("fill", out var f) && f.Equals("none", StringComparison.OrdinalIgnoreCase);
+                    if (isNoFill)
+                    {
+                        Drawing.EffectList? txtEffects = null;
+                        if (properties.TryGetValue("shadow", out var ts) && !ts.Equals("none", StringComparison.OrdinalIgnoreCase))
+                        {
+                            txtEffects ??= new Drawing.EffectList();
+                            txtEffects.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildOuterShadow(ts.Replace(':', '-'), colorBuilder));
+                        }
+                        if (properties.TryGetValue("glow", out var tg) && !tg.Equals("none", StringComparison.OrdinalIgnoreCase))
+                        {
+                            txtEffects ??= new Drawing.EffectList();
+                            txtEffects.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildGlow(tg.Replace(':', '-'), colorBuilder));
+                        }
+                        if (txtEffects != null)
+                            rPr.AppendChild(txtEffects);
+                    }
+
+                    // Fonts last (schema order)
+                    if (properties.TryGetValue("font", out var shpFont))
+                    {
+                        rPr.AppendChild(new Drawing.LatinFont { Typeface = shpFont });
+                        rPr.AppendChild(new Drawing.EastAsianFont { Typeface = shpFont });
+                    }
+
+                    var pPr = new Drawing.ParagraphProperties();
+                    if (properties.TryGetValue("align", out var shpAlign))
+                    {
+                        pPr.Alignment = shpAlign.ToLowerInvariant() switch
+                        {
+                            "center" or "c" or "ctr" => Drawing.TextAlignmentTypeValues.Center,
+                            "right" or "r" => Drawing.TextAlignmentTypeValues.Right,
+                            _ => Drawing.TextAlignmentTypeValues.Left
+                        };
+                    }
+
+                    txBody.AppendChild(new Drawing.Paragraph(
+                        pPr,
+                        new Drawing.Run(rPr, new Drawing.Text(line))
+                    ));
+                }
+
+                var shape = new XDR.Shape(
+                    new XDR.NonVisualShapeProperties(
+                        new XDR.NonVisualDrawingProperties { Id = shpId, Name = shpName },
+                        new XDR.NonVisualShapeDrawingProperties()
+                    ),
+                    spPr,
+                    txBody
+                );
+
+                var shpAnchor = new XDR.TwoCellAnchor(
+                    new XDR.FromMarker(
+                        new XDR.ColumnId(sx.ToString()),
+                        new XDR.ColumnOffset("0"),
+                        new XDR.RowId(sy.ToString()),
+                        new XDR.RowOffset("0")
+                    ),
+                    new XDR.ToMarker(
+                        new XDR.ColumnId((sx + sw).ToString()),
+                        new XDR.ColumnOffset("0"),
+                        new XDR.RowId((sy + sh).ToString()),
+                        new XDR.RowOffset("0")
+                    ),
+                    shape,
+                    new XDR.ClientData()
+                );
+
+                shpDrawingsPart.WorksheetDrawing.AppendChild(shpAnchor);
+                shpDrawingsPart.WorksheetDrawing.Save();
+
+                var shpAnchors = shpDrawingsPart.WorksheetDrawing.Elements<XDR.TwoCellAnchor>()
+                    .Where(a => a.Descendants<XDR.Shape>().Any()).ToList();
+                var shpIdx = shpAnchors.IndexOf(shpAnchor) + 1;
+
+                return $"/{shpSheetName}/shape[{shpIdx}]";
+            }
+
             case "table" or "listobject":
             {
                 var tblSegments = parentPath.TrimStart('/').Split('/', 2);

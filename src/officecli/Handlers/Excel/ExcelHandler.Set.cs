@@ -264,72 +264,62 @@ public partial class ExcelHandler
                         break;
                     }
                     case "shadow":
+                    case "glow":
+                    case "reflection":
+                    case "softedge":
                     {
                         var spPr = anchor.Descendants<XDR.ShapeProperties>().FirstOrDefault();
                         if (spPr != null)
                         {
                             var effectList = spPr.GetFirstChild<Drawing.EffectList>();
-                            if (value.Equals("none", StringComparison.OrdinalIgnoreCase) ||
-                                value.Equals("false", StringComparison.OrdinalIgnoreCase))
+                            // Normalize : separator to - for shared helper compatibility
+                            var normalizedVal = value.Replace(':', '-');
+                            if (normalizedVal == "true") normalizedVal = key == "shadow" ? "000000" : key == "glow" ? "4472C4" : "half";
+
+                            if (normalizedVal.Equals("none", StringComparison.OrdinalIgnoreCase) ||
+                                normalizedVal.Equals("false", StringComparison.OrdinalIgnoreCase))
                             {
-                                effectList?.RemoveAllChildren<Drawing.OuterShadow>();
-                                if (effectList != null && !effectList.HasChildren) spPr.RemoveChild(effectList);
+                                if (effectList != null)
+                                {
+                                    switch (key)
+                                    {
+                                        case "shadow": effectList.RemoveAllChildren<Drawing.OuterShadow>(); break;
+                                        case "glow": effectList.RemoveAllChildren<Drawing.Glow>(); break;
+                                        case "reflection": effectList.RemoveAllChildren<Drawing.Reflection>(); break;
+                                        case "softedge": effectList.RemoveAllChildren<Drawing.SoftEdge>(); break;
+                                    }
+                                    if (!effectList.HasChildren) spPr.RemoveChild(effectList);
+                                }
                             }
                             else
                             {
                                 if (effectList == null) { effectList = new Drawing.EffectList(); spPr.AppendChild(effectList); }
-                                effectList.RemoveAllChildren<Drawing.OuterShadow>();
-
-                                // Format: "color:blur:dist:dir" e.g. "000000:4:3:45" or just "true"
-                                var parts = value.Split(':');
-                                var sColor = parts.Length > 0 && parts[0] != "true" ? parts[0] : "000000";
-                                var sBlur = 4; var sDist = 3; var sDir = 45;
-                                if (parts.Length > 1 && !int.TryParse(parts[1], out sBlur))
-                                { Console.Error.WriteLine($"Warning: invalid shadow blur '{parts[1]}', expected integer. Format: COLOR[:BLUR[:DIST[:DIR]]]"); sBlur = 4; }
-                                if (parts.Length > 2 && !int.TryParse(parts[2], out sDist))
-                                { Console.Error.WriteLine($"Warning: invalid shadow distance '{parts[2]}', expected integer. Format: COLOR[:BLUR[:DIST[:DIR]]]"); sDist = 3; }
-                                if (parts.Length > 3 && !int.TryParse(parts[3], out sDir))
-                                { Console.Error.WriteLine($"Warning: invalid shadow direction '{parts[3]}', expected integer. Format: COLOR[:BLUR[:DIST[:DIR]]]"); sDir = 45; }
-
-                                var shadow = new Drawing.OuterShadow
+                                Func<string, DocumentFormat.OpenXml.OpenXmlElement> colorBuilder = c =>
                                 {
-                                    BlurRadius = (long)(sBlur * 12700),
-                                    Distance = (long)(sDist * 12700),
-                                    Direction = sDir * 60000,
-                                    Alignment = Drawing.RectangleAlignmentValues.BottomRight,
-                                    RotateWithShape = false
+                                    var (rgb, alpha) = OfficeCli.Core.ParseHelpers.SanitizeColorForOoxml(c);
+                                    var clr = new Drawing.RgbColorModelHex { Val = rgb };
+                                    if (alpha.HasValue) clr.AppendChild(new Drawing.Alpha { Val = alpha.Value });
+                                    return clr;
                                 };
-                                var (sRgb, sAlpha) = OfficeCli.Core.ParseHelpers.SanitizeColorForOoxml(sColor);
-                                var sClr = new Drawing.RgbColorModelHex { Val = sRgb };
-                                if (sAlpha.HasValue) sClr.AppendChild(new Drawing.Alpha { Val = sAlpha.Value });
-                                shadow.AppendChild(sClr);
-                                effectList.AppendChild(shadow);
-                            }
-                        }
-                        break;
-                    }
-                    case "glow":
-                    {
-                        var spPr = anchor.Descendants<XDR.ShapeProperties>().FirstOrDefault();
-                        if (spPr != null)
-                        {
-                            var effectList = spPr.GetFirstChild<Drawing.EffectList>();
-                            if (effectList == null) { effectList = new Drawing.EffectList(); spPr.AppendChild(effectList); }
-                            effectList.RemoveAllChildren<Drawing.Glow>();
-
-                            if (!value.Equals("none", StringComparison.OrdinalIgnoreCase) &&
-                                !value.Equals("false", StringComparison.OrdinalIgnoreCase))
-                            {
-                                // Format: "color:radius" e.g. "4472C4:6" or just "color"
-                                var parts = value.Split(':');
-                                var gRadius = parts.Length > 1 && int.TryParse(parts[1], out var r) ? r : 6;
-
-                                var glow = new Drawing.Glow { Radius = (long)(gRadius * 12700) };
-                                var (gRgb, gAlpha) = OfficeCli.Core.ParseHelpers.SanitizeColorForOoxml(parts[0]);
-                                var gClr = new Drawing.RgbColorModelHex { Val = gRgb };
-                                if (gAlpha.HasValue) gClr.AppendChild(new Drawing.Alpha { Val = gAlpha.Value });
-                                glow.AppendChild(gClr);
-                                effectList.AppendChild(glow);
+                                switch (key)
+                                {
+                                    case "shadow":
+                                        effectList.RemoveAllChildren<Drawing.OuterShadow>();
+                                        effectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildOuterShadow(normalizedVal, colorBuilder));
+                                        break;
+                                    case "glow":
+                                        effectList.RemoveAllChildren<Drawing.Glow>();
+                                        effectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildGlow(normalizedVal, colorBuilder));
+                                        break;
+                                    case "reflection":
+                                        effectList.RemoveAllChildren<Drawing.Reflection>();
+                                        effectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildReflection(normalizedVal));
+                                        break;
+                                    case "softedge":
+                                        effectList.RemoveAllChildren<Drawing.SoftEdge>();
+                                        effectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildSoftEdge(normalizedVal));
+                                        break;
+                                }
                             }
                         }
                         break;
@@ -342,6 +332,242 @@ public partial class ExcelHandler
 
             drawingsPart.WorksheetDrawing.Save();
             return picUnsupported;
+        }
+
+        // Handle /SheetName/shape[N]
+        var shapeSetMatch = Regex.Match(cellRef, @"^shape\[(\d+)\]$", RegexOptions.IgnoreCase);
+        if (shapeSetMatch.Success)
+        {
+            var shpIdx = int.Parse(shapeSetMatch.Groups[1].Value);
+            var drawingsPart = worksheet.DrawingsPart
+                ?? throw new ArgumentException("Sheet has no drawings/shapes");
+            var wsDrawing = drawingsPart.WorksheetDrawing
+                ?? throw new ArgumentException("Sheet has no drawings/shapes");
+
+            var shpAnchors = wsDrawing.Elements<XDR.TwoCellAnchor>()
+                .Where(a => a.Descendants<XDR.Shape>().Any()).ToList();
+            if (shpIdx < 1 || shpIdx > shpAnchors.Count)
+                throw new ArgumentException($"Shape index {shpIdx} out of range (1..{shpAnchors.Count})");
+
+            var anchor = shpAnchors[shpIdx - 1];
+            var shape = anchor.Descendants<XDR.Shape>().First();
+            var shpUnsupported = new List<string>();
+
+            foreach (var (key, value) in properties)
+            {
+                switch (key.ToLowerInvariant())
+                {
+                    case "x":
+                        if (anchor.FromMarker != null)
+                            anchor.FromMarker.ColumnId!.Text = ParseHelpers.SafeParseInt(value, "x").ToString();
+                        break;
+                    case "y":
+                        if (anchor.FromMarker != null)
+                            anchor.FromMarker.RowId!.Text = ParseHelpers.SafeParseInt(value, "y").ToString();
+                        break;
+                    case "width":
+                        if (anchor.FromMarker != null && anchor.ToMarker != null)
+                        {
+                            var fromCol = int.TryParse(anchor.FromMarker.ColumnId?.Text, out var fc) ? fc : 0;
+                            anchor.ToMarker.ColumnId!.Text = (fromCol + ParseHelpers.SafeParseInt(value, "width")).ToString();
+                        }
+                        break;
+                    case "height":
+                        if (anchor.FromMarker != null && anchor.ToMarker != null)
+                        {
+                            var fromRow = int.TryParse(anchor.FromMarker.RowId?.Text, out var fr) ? fr : 0;
+                            anchor.ToMarker.RowId!.Text = (fromRow + ParseHelpers.SafeParseInt(value, "height")).ToString();
+                        }
+                        break;
+                    case "name":
+                    {
+                        var nvProps = shape.NonVisualShapeProperties?.GetFirstChild<XDR.NonVisualDrawingProperties>();
+                        if (nvProps != null) nvProps.Name = value;
+                        break;
+                    }
+                    case "text":
+                    {
+                        var txBody = shape.TextBody;
+                        if (txBody != null)
+                        {
+                            // Preserve first paragraph's properties, replace text
+                            var firstPara = txBody.Elements<Drawing.Paragraph>().FirstOrDefault();
+                            var pProps = firstPara?.ParagraphProperties?.CloneNode(true);
+                            var rProps = firstPara?.Elements<Drawing.Run>().FirstOrDefault()?.RunProperties?.CloneNode(true);
+                            txBody.RemoveAllChildren<Drawing.Paragraph>();
+                            var lines = value.Replace("\\n", "\n").Split('\n');
+                            foreach (var line in lines)
+                            {
+                                var para = new Drawing.Paragraph();
+                                if (pProps != null) para.AppendChild(pProps.CloneNode(true));
+                                var run = new Drawing.Run(new Drawing.Text(line));
+                                if (rProps != null) run.RunProperties = (Drawing.RunProperties)rProps.CloneNode(true);
+                                para.AppendChild(run);
+                                txBody.AppendChild(para);
+                            }
+                        }
+                        break;
+                    }
+                    case "font":
+                        foreach (var run in shape.Descendants<Drawing.Run>())
+                        {
+                            var rPr = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                            rPr.RemoveAllChildren<Drawing.LatinFont>();
+                            rPr.RemoveAllChildren<Drawing.EastAsianFont>();
+                            rPr.AppendChild(new Drawing.LatinFont { Typeface = value });
+                            rPr.AppendChild(new Drawing.EastAsianFont { Typeface = value });
+                        }
+                        break;
+                    case "size":
+                        foreach (var run in shape.Descendants<Drawing.Run>())
+                        {
+                            var rPr = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                            rPr.FontSize = (int)Math.Round(ParseHelpers.SafeParseDouble(value, "size") * 100);
+                        }
+                        break;
+                    case "bold":
+                        foreach (var run in shape.Descendants<Drawing.Run>())
+                        {
+                            var rPr = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                            rPr.Bold = IsTruthy(value);
+                        }
+                        break;
+                    case "italic":
+                        foreach (var run in shape.Descendants<Drawing.Run>())
+                        {
+                            var rPr = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                            rPr.Italic = IsTruthy(value);
+                        }
+                        break;
+                    case "color":
+                        foreach (var run in shape.Descendants<Drawing.Run>())
+                        {
+                            var rPr = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                            rPr.RemoveAllChildren<Drawing.SolidFill>();
+                            var (cRgb, _) = ParseHelpers.SanitizeColorForOoxml(value);
+                            OfficeCli.Core.DrawingEffectsHelper.InsertFillInRunProperties(rPr,
+                                new Drawing.SolidFill(new Drawing.RgbColorModelHex { Val = cRgb }));
+                        }
+                        break;
+                    case "fill":
+                    {
+                        var spPr = shape.ShapeProperties;
+                        if (spPr != null)
+                        {
+                            spPr.RemoveAllChildren<Drawing.SolidFill>();
+                            spPr.RemoveAllChildren<Drawing.NoFill>();
+                            if (value.Equals("none", StringComparison.OrdinalIgnoreCase))
+                                spPr.AppendChild(new Drawing.NoFill());
+                            else
+                            {
+                                var (fRgb, _) = ParseHelpers.SanitizeColorForOoxml(value);
+                                spPr.AppendChild(new Drawing.SolidFill(new Drawing.RgbColorModelHex { Val = fRgb }));
+                            }
+                        }
+                        break;
+                    }
+                    case "shadow":
+                    case "glow":
+                    case "reflection":
+                    case "softedge":
+                    {
+                        var spPr = shape.ShapeProperties;
+                        if (spPr == null) break;
+                        var isNoFill = spPr.GetFirstChild<Drawing.NoFill>() != null;
+                        var normalizedVal = value.Replace(':', '-');
+
+                        // Text-level effects for fill=none shapes
+                        if (isNoFill && (key == "shadow" || key == "glow"))
+                        {
+                            foreach (var run in shape.Descendants<Drawing.Run>())
+                            {
+                                Func<string, DocumentFormat.OpenXml.OpenXmlElement> cb = c =>
+                                {
+                                    var (rgb, alpha) = ParseHelpers.SanitizeColorForOoxml(c);
+                                    var clr = new Drawing.RgbColorModelHex { Val = rgb };
+                                    if (alpha.HasValue) clr.AppendChild(new Drawing.Alpha { Val = alpha.Value });
+                                    return clr;
+                                };
+                                if (key == "shadow")
+                                    OfficeCli.Core.DrawingEffectsHelper.ApplyTextEffect<Drawing.OuterShadow>(run, normalizedVal, () =>
+                                        OfficeCli.Core.DrawingEffectsHelper.BuildOuterShadow(normalizedVal, cb));
+                                else
+                                    OfficeCli.Core.DrawingEffectsHelper.ApplyTextEffect<Drawing.Glow>(run, normalizedVal, () =>
+                                        OfficeCli.Core.DrawingEffectsHelper.BuildGlow(normalizedVal, cb));
+                            }
+                        }
+                        else
+                        {
+                            // Shape-level effects
+                            var effectList = spPr.GetFirstChild<Drawing.EffectList>();
+                            if (normalizedVal.Equals("none", StringComparison.OrdinalIgnoreCase) ||
+                                normalizedVal.Equals("false", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (effectList != null)
+                                {
+                                    switch (key)
+                                    {
+                                        case "shadow": effectList.RemoveAllChildren<Drawing.OuterShadow>(); break;
+                                        case "glow": effectList.RemoveAllChildren<Drawing.Glow>(); break;
+                                        case "reflection": effectList.RemoveAllChildren<Drawing.Reflection>(); break;
+                                        case "softedge": effectList.RemoveAllChildren<Drawing.SoftEdge>(); break;
+                                    }
+                                    if (!effectList.HasChildren) spPr.RemoveChild(effectList);
+                                }
+                            }
+                            else
+                            {
+                                if (effectList == null) { effectList = new Drawing.EffectList(); spPr.AppendChild(effectList); }
+                                Func<string, DocumentFormat.OpenXml.OpenXmlElement> cb = c =>
+                                {
+                                    var (rgb, alpha) = ParseHelpers.SanitizeColorForOoxml(c);
+                                    var clr = new Drawing.RgbColorModelHex { Val = rgb };
+                                    if (alpha.HasValue) clr.AppendChild(new Drawing.Alpha { Val = alpha.Value });
+                                    return clr;
+                                };
+                                switch (key)
+                                {
+                                    case "shadow":
+                                        effectList.RemoveAllChildren<Drawing.OuterShadow>();
+                                        effectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildOuterShadow(normalizedVal, cb));
+                                        break;
+                                    case "glow":
+                                        effectList.RemoveAllChildren<Drawing.Glow>();
+                                        effectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildGlow(normalizedVal, cb));
+                                        break;
+                                    case "reflection":
+                                        effectList.RemoveAllChildren<Drawing.Reflection>();
+                                        effectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildReflection(normalizedVal));
+                                        break;
+                                    case "softedge":
+                                        effectList.RemoveAllChildren<Drawing.SoftEdge>();
+                                        effectList.AppendChild(OfficeCli.Core.DrawingEffectsHelper.BuildSoftEdge(normalizedVal));
+                                        break;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    case "align":
+                        foreach (var para in shape.Descendants<Drawing.Paragraph>())
+                        {
+                            var pPr = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
+                            pPr.Alignment = value.ToLowerInvariant() switch
+                            {
+                                "center" or "c" or "ctr" => Drawing.TextAlignmentTypeValues.Center,
+                                "right" or "r" => Drawing.TextAlignmentTypeValues.Right,
+                                _ => Drawing.TextAlignmentTypeValues.Left
+                            };
+                        }
+                        break;
+                    default:
+                        shpUnsupported.Add(key);
+                        break;
+                }
+            }
+
+            drawingsPart.WorksheetDrawing.Save();
+            return shpUnsupported;
         }
 
         // Handle /SheetName/table[N]

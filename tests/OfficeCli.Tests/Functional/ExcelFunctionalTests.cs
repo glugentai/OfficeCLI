@@ -629,4 +629,119 @@ public class ExcelFunctionalTests : IDisposable
         chart.Type.Should().Be("chart");
         ((string)chart.Format["title"]).Should().Be("Updated Sales");
     }
+
+    // ==================== Excel Shape Lifecycle ====================
+
+    [Fact]
+    public void Shape_Add_Get_Lifecycle()
+    {
+        // 1. Add shape with text, font, color
+        _handler.Add("/Sheet1", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Hello",
+            ["font"] = "Arial",
+            ["size"] = "24",
+            ["bold"] = "true",
+            ["color"] = "FF0000",
+            ["fill"] = "0000FF",
+            ["align"] = "center",
+            ["x"] = "1", ["y"] = "2", ["width"] = "6", ["height"] = "3"
+        });
+
+        // 2. Get + Verify
+        var node = _handler.Get("/Sheet1/shape[1]");
+        node.Type.Should().Be("shape");
+        node.Text.Should().Be("Hello");
+        node.Format["font"].ToString()!.Should().Be("Arial");
+        node.Format["size"].ToString()!.Should().Be("24pt");
+        node.Format["bold"].Should().Be(true);
+        node.Format["color"].ToString()!.Should().Be("FF0000");
+        node.Format["fill"].ToString()!.Should().Be("0000FF");
+        node.Format["x"].ToString()!.Should().Be("1");
+        node.Format["width"].ToString()!.Should().Be("6");
+    }
+
+    [Fact]
+    public void Shape_Set_Font_Color_Size()
+    {
+        _handler.Add("/Sheet1", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Test", ["font"] = "Arial", ["size"] = "20", ["color"] = "000000"
+        });
+
+        // Set new font properties
+        _handler.Set("/Sheet1/shape[1]", new Dictionary<string, string>
+        {
+            ["font"] = "Georgia", ["size"] = "36", ["color"] = "FF4500", ["bold"] = "true"
+        });
+
+        var node = _handler.Get("/Sheet1/shape[1]");
+        node.Format["font"].ToString()!.Should().Be("Georgia");
+        node.Format["size"].ToString()!.Should().Be("36pt");
+        node.Format["color"].ToString()!.Should().Be("FF4500");
+        node.Format["bold"].Should().Be(true);
+    }
+
+    [Fact]
+    public void Shape_Set_Text()
+    {
+        _handler.Add("/Sheet1", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Original", ["font"] = "Arial"
+        });
+
+        _handler.Set("/Sheet1/shape[1]", new Dictionary<string, string> { ["text"] = "Updated" });
+
+        var node = _handler.Get("/Sheet1/shape[1]");
+        node.Text.Should().Be("Updated");
+        // Font should be preserved after text change
+        node.Format["font"].ToString()!.Should().Be("Arial");
+    }
+
+    [Fact]
+    public void Shape_Effects_Shadow_Glow()
+    {
+        _handler.Add("/Sheet1", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Effects", ["fill"] = "none",
+            ["shadow"] = "FF0000-8-135-4-60",
+            ["glow"] = "FF6600-12-80"
+        });
+
+        var node = _handler.Get("/Sheet1/shape[1]");
+        node.Format.Should().ContainKey("shadow");
+        node.Format.Should().ContainKey("glow");
+        node.Format["shadow"].ToString()!.Should().StartWith("FF0000");
+        node.Format["glow"].ToString()!.Should().StartWith("FF6600");
+
+        // Remove effects
+        _handler.Set("/Sheet1/shape[1]", new Dictionary<string, string>
+        {
+            ["shadow"] = "none", ["glow"] = "none"
+        });
+        node = _handler.Get("/Sheet1/shape[1]");
+        node.Format.Should().NotContainKey("shadow");
+        node.Format.Should().NotContainKey("glow");
+    }
+
+    [Fact]
+    public void Shape_Persist_AfterReopen()
+    {
+        _handler.Add("/Sheet1", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Persist", ["font"] = "Impact", ["size"] = "48",
+            ["bold"] = "true", ["color"] = "FFD700", ["fill"] = "1A1A2E"
+        });
+
+        Reopen();
+
+        var node = _handler.Get("/Sheet1/shape[1]");
+        node.Type.Should().Be("shape");
+        node.Text.Should().Be("Persist");
+        node.Format["font"].ToString()!.Should().Be("Impact");
+        node.Format["size"].ToString()!.Should().Be("48pt");
+        node.Format["bold"].Should().Be(true);
+        node.Format["color"].ToString()!.Should().Be("FFD700");
+        node.Format["fill"].ToString()!.Should().Be("1A1A2E");
+    }
 }

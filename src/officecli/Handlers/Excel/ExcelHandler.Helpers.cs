@@ -744,4 +744,110 @@ public partial class ExcelHandler
 
         return node;
     }
+
+    private DocumentNode GetShapeNode(string sheetName, WorksheetPart worksheetPart, int index, string path)
+    {
+        var drawingsPart = worksheetPart.DrawingsPart
+            ?? throw new ArgumentException("Sheet has no drawings/shapes");
+        var wsDrawing = drawingsPart.WorksheetDrawing
+            ?? throw new ArgumentException("Sheet has no drawings/shapes");
+
+        var shpAnchors = wsDrawing.Elements<XDR.TwoCellAnchor>()
+            .Where(a => a.Descendants<XDR.Shape>().Any()).ToList();
+
+        if (index < 1 || index > shpAnchors.Count)
+            throw new ArgumentException($"Shape index {index} out of range (1..{shpAnchors.Count})");
+
+        var anchor = shpAnchors[index - 1];
+        var shape = anchor.Descendants<XDR.Shape>().First();
+
+        var node = new DocumentNode { Path = path, Type = "shape" };
+
+        // Name
+        var nvProps = shape.NonVisualShapeProperties?.GetFirstChild<XDR.NonVisualDrawingProperties>();
+        if (nvProps?.Name?.Value != null)
+            node.Format["name"] = nvProps.Name.Value;
+
+        // Text
+        var textRuns = shape.TextBody?.Descendants<Drawing.Run>().ToList();
+        if (textRuns != null && textRuns.Count > 0)
+            node.Text = string.Join("", textRuns.Select(r => r.Text?.Text ?? ""));
+
+        // Position/size
+        var from = anchor.FromMarker;
+        var to = anchor.ToMarker;
+        if (from != null)
+        {
+            node.Format["x"] = from.ColumnId?.Text ?? "0";
+            node.Format["y"] = from.RowId?.Text ?? "0";
+        }
+        if (to != null && from != null)
+        {
+            var fromCol = int.TryParse(from.ColumnId?.Text, out var fc) ? fc : 0;
+            var toCol = int.TryParse(to.ColumnId?.Text, out var tc) ? tc : 0;
+            var fromRow = int.TryParse(from.RowId?.Text, out var fr) ? fr : 0;
+            var toRow = int.TryParse(to.RowId?.Text, out var tr2) ? tr2 : 0;
+            node.Format["width"] = (toCol - fromCol).ToString();
+            node.Format["height"] = (toRow - fromRow).ToString();
+        }
+
+        // Font properties from first run
+        var firstRun = textRuns?.FirstOrDefault();
+        var rPr = firstRun?.RunProperties;
+        if (rPr != null)
+        {
+            if (rPr.FontSize?.HasValue == true)
+                node.Format["size"] = $"{rPr.FontSize.Value / 100.0}pt";
+            if (rPr.Bold?.HasValue == true && rPr.Bold.Value)
+                node.Format["bold"] = true;
+            if (rPr.Italic?.HasValue == true && rPr.Italic.Value)
+                node.Format["italic"] = true;
+
+            var solidFill = rPr.GetFirstChild<Drawing.SolidFill>();
+            var colorHex = solidFill?.GetFirstChild<Drawing.RgbColorModelHex>();
+            if (colorHex?.Val?.Value != null)
+                node.Format["color"] = colorHex.Val.Value;
+
+            var latin = rPr.GetFirstChild<Drawing.LatinFont>();
+            if (latin?.Typeface?.Value != null)
+                node.Format["font"] = latin.Typeface.Value;
+        }
+
+        // Fill
+        var spPr = shape.ShapeProperties;
+        if (spPr?.GetFirstChild<Drawing.NoFill>() != null)
+            node.Format["fill"] = "none";
+        else
+        {
+            var shapeFill = spPr?.GetFirstChild<Drawing.SolidFill>();
+            var fillColor = shapeFill?.GetFirstChild<Drawing.RgbColorModelHex>();
+            if (fillColor?.Val?.Value != null)
+                node.Format["fill"] = fillColor.Val.Value;
+        }
+
+        // Effects — check shape-level then text-level
+        var effectList = spPr?.GetFirstChild<Drawing.EffectList>();
+        var textEffectList = (effectList == null || !effectList.HasChildren)
+            ? rPr?.GetFirstChild<Drawing.EffectList>()
+            : null;
+        var activeEffects = effectList?.HasChildren == true ? effectList : textEffectList;
+        if (activeEffects != null)
+        {
+            var shadow = activeEffects.GetFirstChild<Drawing.OuterShadow>();
+            if (shadow != null)
+            {
+                var sColor = shadow.GetFirstChild<Drawing.RgbColorModelHex>()?.Val?.Value ?? "000000";
+                node.Format["shadow"] = sColor;
+            }
+            var glow = activeEffects.GetFirstChild<Drawing.Glow>();
+            if (glow != null)
+            {
+                var gColor = glow.GetFirstChild<Drawing.RgbColorModelHex>()?.Val?.Value ?? "000000";
+                var gRadius = glow.Radius?.HasValue == true ? $"{glow.Radius.Value / 12700.0:0.##}" : "8";
+                node.Format["glow"] = $"{gColor}-{gRadius}";
+            }
+        }
+
+        return node;
+    }
 }

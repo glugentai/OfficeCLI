@@ -32,35 +32,7 @@ public partial class PowerPointHandler
         if (string.IsNullOrWhiteSpace(value))
             throw new ArgumentException("Shadow value cannot be empty. Use 'none' to remove shadow.");
 
-        // Normalize alternative separator: "COLOR;BLUR;ANGLE;DIST;OPACITY" → "COLOR-BLUR-ANGLE-DIST-OPACITY"
-        value = value.Replace(';', '-');
-        var parts = value.Split('-');
-        // Format: COLOR[-BLUR[-ANGLE[-DIST[-OPACITY]]]]
-        var blurStr = parts.Length > 1 ? parts[1] : "4";
-        var angleStr = parts.Length > 2 ? parts[2] : "45";
-        var distStr = parts.Length > 3 ? parts[3] : "3";
-        var opacStr = parts.Length > 4 ? parts[4] : "40";
-        if (!double.TryParse(blurStr, out var blurPt) || double.IsNaN(blurPt) || double.IsInfinity(blurPt))
-            throw new ArgumentException($"Invalid shadow blur value: '{blurStr}'. Expected a finite number. Format: COLOR[-BLUR[-ANGLE[-DIST[-OPACITY]]]]");
-        if (!double.TryParse(angleStr, out var angleDeg) || double.IsNaN(angleDeg) || double.IsInfinity(angleDeg))
-            throw new ArgumentException($"Invalid shadow angle value: '{angleStr}'. Expected a finite number. Format: COLOR[-BLUR[-ANGLE[-DIST[-OPACITY]]]]");
-        if (!double.TryParse(distStr, out var distPt) || double.IsNaN(distPt) || double.IsInfinity(distPt))
-            throw new ArgumentException($"Invalid shadow distance value: '{distStr}'. Expected a finite number. Format: COLOR[-BLUR[-ANGLE[-DIST[-OPACITY]]]]");
-        if (!double.TryParse(opacStr, out var opacity) || double.IsNaN(opacity) || double.IsInfinity(opacity))
-            throw new ArgumentException($"Invalid shadow opacity value: '{opacStr}'. Expected a finite number. Format: COLOR[-BLUR[-ANGLE[-DIST[-OPACITY]]]]");
-
-        var shadow = new Drawing.OuterShadow
-        {
-            BlurRadius    = (long)(blurPt * 12700),
-            Distance      = (long)(distPt * 12700),
-            Direction     = (int)(angleDeg * 60000),
-            Alignment     = Drawing.RectangleAlignmentValues.TopLeft,
-            RotateWithShape = false
-        };
-        var clr = BuildColorElement(parts[0]);
-        clr.AppendChild(new Drawing.Alpha { Val = (int)(opacity * 1000) });
-        shadow.AppendChild(clr);
-        effectList.AppendChild(shadow);
+        effectList.AppendChild(BuildOuterShadow(value));
     }
 
     /// <summary>
@@ -82,23 +54,38 @@ public partial class PowerPointHandler
             return;
         }
 
-        // Normalize alternative separator: "COLOR;RADIUS-OPACITY" → "COLOR-RADIUS-OPACITY"
-        value = value.Replace(';', '-');
-        var parts = value.Split('-');
-        // Format: COLOR[-RADIUS[-OPACITY]]
-        var radiusStr = parts.Length > 1 ? parts[1] : "8";
-        var opacStr = parts.Length > 2 ? parts[2] : "75";
-        if (!double.TryParse(radiusStr, out var radiusPt) || double.IsNaN(radiusPt) || double.IsInfinity(radiusPt))
-            throw new ArgumentException($"Invalid glow radius value: '{radiusStr}'. Expected a finite number. Format: COLOR[-RADIUS[-OPACITY]]");
-        if (!double.TryParse(opacStr, out var opacity) || double.IsNaN(opacity) || double.IsInfinity(opacity))
-            throw new ArgumentException($"Invalid glow opacity value: '{opacStr}'. Expected a finite number. Format: COLOR[-RADIUS[-OPACITY]]");
-
-        var glow = new Drawing.Glow { Radius = (long)(radiusPt * 12700) };
-        var glowClr = BuildColorElement(parts[0]);
-        glowClr.AppendChild(new Drawing.Alpha { Val = (int)(opacity * 1000) });
-        glow.AppendChild(glowClr);
-        effectList.AppendChild(glow);
+        effectList.AppendChild(BuildGlow(value));
     }
+
+    /// <summary>
+    /// Check if a shape has no fill (transparent background).
+    /// </summary>
+    private static bool IsNoFillShape(ShapeProperties spPr)
+    {
+        return spPr.GetFirstChild<Drawing.NoFill>() != null;
+    }
+
+    /// <summary>
+    /// Build an OuterShadow element from the shadow value string.
+    /// </summary>
+    private static Drawing.OuterShadow BuildOuterShadow(string value)
+        => OfficeCli.Core.DrawingEffectsHelper.BuildOuterShadow(value, BuildColorElement);
+
+    private static Drawing.Glow BuildGlow(string value)
+        => OfficeCli.Core.DrawingEffectsHelper.BuildGlow(value, BuildColorElement);
+
+    /// <summary>
+    /// Get or create EffectList in correct schema position within RunProperties.
+    /// CT_TextCharacterProperties schema order: ln → fill → effectLst → highlight → uLnTx/uLn → uFillTx/uFill → latin → ea → cs → sym → hlinkClick → hlinkMouseOver → extLst
+    /// </summary>
+    private static void InsertFillInRunProperties(Drawing.RunProperties rPr, DocumentFormat.OpenXml.OpenXmlElement fillElement)
+        => OfficeCli.Core.DrawingEffectsHelper.InsertFillInRunProperties(rPr, fillElement);
+
+    private static void ApplyTextShadow(Drawing.Run run, string value)
+        => OfficeCli.Core.DrawingEffectsHelper.ApplyTextEffect<Drawing.OuterShadow>(run, value, () => BuildOuterShadow(value));
+
+    private static void ApplyTextGlow(Drawing.Run run, string value)
+        => OfficeCli.Core.DrawingEffectsHelper.ApplyTextEffect<Drawing.Glow>(run, value, () => BuildGlow(value));
 
     /// <summary>
     /// Apply reflection effect to ShapeProperties.
@@ -164,6 +151,14 @@ public partial class PowerPointHandler
             throw new ArgumentException($"Invalid 'softedge' value '{value}'. Expected a finite numeric radius in points.");
         effectList.AppendChild(new Drawing.SoftEdge { Radius = (long)(radiusPt * 12700) });
     }
+
+    private static void ApplyTextReflection(Drawing.Run run, string value)
+        => OfficeCli.Core.DrawingEffectsHelper.ApplyTextEffect<Drawing.Reflection>(run, value,
+            () => OfficeCli.Core.DrawingEffectsHelper.BuildReflection(value));
+
+    private static void ApplyTextSoftEdge(Drawing.Run run, string value)
+        => OfficeCli.Core.DrawingEffectsHelper.ApplyTextEffect<Drawing.SoftEdge>(run, value,
+            () => OfficeCli.Core.DrawingEffectsHelper.BuildSoftEdge(value));
 
     /// <summary>
     /// Apply 3D rotation (scene3d) to ShapeProperties.

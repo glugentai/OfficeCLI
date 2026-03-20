@@ -697,6 +697,342 @@ public class PptxFunctionalTests : IDisposable
     }
 
     [Fact]
+    public void TextShadow_NoFillShape_AppliedToRun()
+    {
+        // When fill=none, shadow should be applied to text runs (a:rPr/a:effectLst)
+        // instead of shape properties, so it renders visually on text.
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Shadow Text",
+            ["fill"] = "none",
+            ["shadow"] = "333333"
+        });
+
+        // Get + Verify
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("shadow");
+        node.Format["shadow"]!.ToString()!.Should().StartWith("333333");
+
+        // Set new shadow + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["shadow"] = "FF0000-6-90-4-60" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format["shadow"]!.ToString()!.Should().StartWith("FF0000");
+        node.Format["shadow"]!.ToString()!.Should().Contain("6");
+
+        // Remove shadow + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["shadow"] = "none" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().NotContainKey("shadow");
+    }
+
+    [Fact]
+    public void TextGlow_NoFillShape_AppliedToRun()
+    {
+        // When fill=none, glow should be applied to text runs
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Glow Text",
+            ["fill"] = "none",
+            ["glow"] = "E94560-8-75"
+        });
+
+        // Get + Verify
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("glow");
+        node.Format["glow"]!.ToString()!.Should().StartWith("E94560");
+
+        // Set new glow + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["glow"] = "0000FF-12-90" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format["glow"]!.ToString()!.Should().StartWith("0000FF");
+
+        // Remove glow + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["glow"] = "none" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().NotContainKey("glow");
+    }
+
+    [Fact]
+    public void TextShadow_NoFillShape_PersistsAfterReopen()
+    {
+        // Verify text-level shadow survives save/reopen
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Persistent Shadow",
+            ["fill"] = "none",
+            ["shadow"] = "222222-5-30-3-50"
+        });
+
+        Reopen();
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("shadow");
+        node.Format["shadow"]!.ToString()!.Should().StartWith("222222");
+    }
+
+    [Fact]
+    public void TextGlow_NoFillShape_PersistsAfterReopen()
+    {
+        // Verify text-level glow survives save/reopen
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Persistent Glow",
+            ["fill"] = "none",
+            ["glow"] = "FF6600-10-80"
+        });
+
+        Reopen();
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("glow");
+        node.Format["glow"]!.ToString()!.Should().StartWith("FF6600");
+    }
+
+    [Fact]
+    public void TextFill_NoFillShape_GradientRendered()
+    {
+        // textFill gradient on fill=none shape must insert gradFill before latin/ea in rPr
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Gradient",
+            ["fill"] = "none",
+            ["font"] = "Arial",
+            ["textFill"] = "FF0000-0000FF-90"
+        });
+
+        // Get + Verify textFill is readable
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("textFill");
+        node.Format["textFill"]!.ToString()!.Should().Contain("FF0000");
+
+        // Set new textFill + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["textFill"] = "00FF00-FFFF00-180" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format["textFill"]!.ToString()!.Should().Contain("00FF00");
+
+        // Persistence
+        Reopen();
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("textFill");
+        node.Format["textFill"]!.ToString()!.Should().Contain("00FF00");
+    }
+
+    /// <summary>
+    /// Helper: get the first Drawing.RunProperties from slide 1 shape 1 via reflection.
+    /// </summary>
+    private DocumentFormat.OpenXml.Drawing.RunProperties GetFirstRunProperties()
+    {
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var shape = slidePart.Slide.Descendants<DocumentFormat.OpenXml.Presentation.Shape>().First();
+        return shape.Descendants<DocumentFormat.OpenXml.Drawing.RunProperties>().First();
+    }
+
+    /// <summary>
+    /// Helper: get child element index in parent, or -1 if not found.
+    /// </summary>
+    private static int ChildIndex<T>(DocumentFormat.OpenXml.OpenXmlElement parent) where T : DocumentFormat.OpenXml.OpenXmlElement
+    {
+        int i = 0;
+        foreach (var child in parent.ChildElements)
+        {
+            if (child is T) return i;
+            i++;
+        }
+        return -1;
+    }
+
+    [Fact]
+    public void RunProperties_SolidFillBeforeLatinFont()
+    {
+        // CT_TextCharacterProperties schema: solidFill must come before latin/ea
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Test",
+            ["color"] = "FF0000",
+            ["font"] = "Arial"
+        });
+
+        var rPr = GetFirstRunProperties();
+        var fillIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.SolidFill>(rPr);
+        var latinIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.LatinFont>(rPr);
+        var eaIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.EastAsianFont>(rPr);
+
+        fillIdx.Should().BeGreaterOrEqualTo(0, "solidFill should exist");
+        latinIdx.Should().BeGreaterOrEqualTo(0, "latin font should exist");
+        fillIdx.Should().BeLessThan(latinIdx, "solidFill must come before latin in a:rPr schema order");
+        fillIdx.Should().BeLessThan(eaIdx, "solidFill must come before ea in a:rPr schema order");
+    }
+
+    [Fact]
+    public void RunProperties_GradFillBeforeLatinFont()
+    {
+        // CT_TextCharacterProperties schema: gradFill must come before latin/ea
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Test",
+            ["font"] = "Arial",
+            ["fill"] = "none",
+            ["textFill"] = "FF0000-0000FF-90"
+        });
+
+        var rPr = GetFirstRunProperties();
+        var fillIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.GradientFill>(rPr);
+        var latinIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.LatinFont>(rPr);
+
+        fillIdx.Should().BeGreaterOrEqualTo(0, "gradFill should exist");
+        latinIdx.Should().BeGreaterOrEqualTo(0, "latin font should exist");
+        fillIdx.Should().BeLessThan(latinIdx, "gradFill must come before latin in a:rPr schema order");
+    }
+
+    [Fact]
+    public void RunProperties_EffectLstBeforeLatinFont()
+    {
+        // CT_TextCharacterProperties schema: effectLst must come before latin/ea
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Test",
+            ["font"] = "Arial",
+            ["fill"] = "none",
+            ["shadow"] = "000000"
+        });
+
+        var rPr = GetFirstRunProperties();
+        var effectIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.EffectList>(rPr);
+        var latinIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.LatinFont>(rPr);
+
+        effectIdx.Should().BeGreaterOrEqualTo(0, "effectLst should exist");
+        latinIdx.Should().BeGreaterOrEqualTo(0, "latin font should exist");
+        effectIdx.Should().BeLessThan(latinIdx, "effectLst must come before latin in a:rPr schema order");
+    }
+
+    [Fact]
+    public void RunProperties_SchemaOrder_FillBeforeEffectBeforeFont()
+    {
+        // Full ordering: solidFill < effectLst < latin/ea
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Test",
+            ["color"] = "FFFFFF",
+            ["font"] = "Arial",
+            ["fill"] = "none",
+            ["shadow"] = "000000",
+            ["glow"] = "FF0000-8-75"
+        });
+
+        var rPr = GetFirstRunProperties();
+        var fillIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.SolidFill>(rPr);
+        var effectIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.EffectList>(rPr);
+        var latinIdx = ChildIndex<DocumentFormat.OpenXml.Drawing.LatinFont>(rPr);
+
+        fillIdx.Should().BeGreaterOrEqualTo(0, "solidFill should exist");
+        effectIdx.Should().BeGreaterOrEqualTo(0, "effectLst should exist");
+        latinIdx.Should().BeGreaterOrEqualTo(0, "latin should exist");
+
+        fillIdx.Should().BeLessThan(effectIdx, "solidFill must come before effectLst");
+        effectIdx.Should().BeLessThan(latinIdx, "effectLst must come before latin");
+    }
+
+    [Fact]
+    public void TextReflection_NoFillShape_AppliedToRun()
+    {
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Reflected",
+            ["fill"] = "none",
+            ["reflection"] = "half"
+        });
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("reflection");
+        node.Format["reflection"]!.ToString()!.Should().Be("half");
+
+        // Set + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["reflection"] = "full" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format["reflection"]!.ToString()!.Should().Be("full");
+
+        // Remove + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["reflection"] = "none" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().NotContainKey("reflection");
+    }
+
+    [Fact]
+    public void TextSoftEdge_NoFillShape_AppliedToRun()
+    {
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Soft",
+            ["fill"] = "none",
+            ["softEdge"] = "8"
+        });
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("softEdge");
+        node.Format["softEdge"]!.ToString()!.Should().Be("8");
+
+        // Set + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["softEdge"] = "12" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format["softEdge"]!.ToString()!.Should().Be("12");
+
+        // Remove + Verify
+        _handler.Set("/slide[1]/shape[1]", new Dictionary<string, string> { ["softEdge"] = "none" });
+        node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().NotContainKey("softEdge");
+    }
+
+    [Fact]
+    public void TextReflection_NoFillShape_PersistsAfterReopen()
+    {
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Reflected",
+            ["fill"] = "none",
+            ["reflection"] = "tight"
+        });
+
+        Reopen();
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("reflection");
+        node.Format["reflection"]!.ToString()!.Should().Be("tight");
+    }
+
+    [Fact]
+    public void TextSoftEdge_NoFillShape_PersistsAfterReopen()
+    {
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "Soft",
+            ["fill"] = "none",
+            ["softEdge"] = "5"
+        });
+
+        Reopen();
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("softEdge");
+        node.Format["softEdge"]!.ToString()!.Should().Be("5");
+    }
+
+    [Fact]
     public void ShapeReflection_Lifecycle()
     {
         // 1. Add shape with reflection
@@ -854,6 +1190,103 @@ public class PptxFunctionalTests : IDisposable
         Reopen();
         node = _handler.Get("/slide[1]/shape[1]");
         ((string)node.Format["lineOpacity"]).Should().Be("0.3");
+    }
+
+    [Fact]
+    public void LineWidth_BareNumber_TreatedAsPoints()
+    {
+        // Bug: lineWidth=3 was treated as 3 EMU (≈0), should be 3pt (38100 EMU)
+        // Apache POI's setLineWidth() accepts points for bare numbers
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "Test", ["line"] = "FF0000", ["lineWidth"] = "3"
+        });
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        // 3pt = 38100 EMU = 0.11cm (approx)
+        var lw = (string)node.Format["lineWidth"];
+        // Should NOT be "0cm" (which would mean 3 EMU)
+        lw.Should().NotBe("0cm", "bare number lineWidth should be treated as points, not EMU");
+
+        // Verify 3pt with explicit suffix gives same result
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "Test2", ["line"] = "FF0000", ["lineWidth"] = "3pt"
+        });
+        var node2 = _handler.Get("/slide[1]/shape[2]");
+        ((string)node2.Format["lineWidth"]).Should().Be(lw,
+            "lineWidth=3 and lineWidth=3pt should produce identical results");
+    }
+
+    [Fact]
+    public void CustomGeometry_CoordinatesScaledTo100000()
+    {
+        // Bug: path w/h used raw user coordinates (e.g. w=100), which is too small for PowerPoint
+        // to render. OOXML standard uses 0-100000 coordinate space for custom geometry.
+        // Fix: multiply user coordinates by 1000 internally (0-100 → 0-100000).
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["fill"] = "FF0000",
+            ["geometry"] = "M 50,0 L 100,100 L 0,100 Z" // triangle in 0-100 space
+        });
+
+        // Read raw XML to check path dimensions
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var shape = slidePart.Slide.Descendants<DocumentFormat.OpenXml.Presentation.Shape>().First();
+        var custGeom = shape.ShapeProperties!.GetFirstChild<DocumentFormat.OpenXml.Drawing.CustomGeometry>()!;
+        var path = custGeom.PathList!.GetFirstChild<DocumentFormat.OpenXml.Drawing.Path>()!;
+
+        // Path w/h should be scaled to OOXML standard range (×1000)
+        path.Width!.Value.Should().Be(100000L,
+            "path width should be scaled from 100 to 100000 for OOXML compatibility");
+        path.Height!.Value.Should().Be(100000L,
+            "path height should be scaled from 100 to 100000 for OOXML compatibility");
+
+        // Point coordinates should also be scaled
+        var moveTo = path.GetFirstChild<DocumentFormat.OpenXml.Drawing.MoveTo>()!;
+        var pt = moveTo.GetFirstChild<DocumentFormat.OpenXml.Drawing.Point>()!;
+        pt.X!.Value.Should().Be("50000", "x=50 should be scaled to 50000");
+        pt.Y!.Value.Should().Be("0", "y=0 should remain 0");
+    }
+
+    [Fact]
+    public void CustomGeometry_InsertedAfterXfrm_BeforeFill()
+    {
+        // Bug: custGeom was appended after solidFill/ln, PowerPoint ignores it.
+        // OOXML requires: xfrm → custGeom → fill → ln
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["fill"] = "FF0000",
+            ["line"] = "0000FF",
+            ["geometry"] = "M 0,0 L 100,0 L 100,100 L 0,100 Z"
+        });
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var shape = slidePart.Slide.Descendants<DocumentFormat.OpenXml.Presentation.Shape>().First();
+        var spPr = shape.ShapeProperties!;
+
+        // Verify element order: xfrm must come before custGeom, custGeom before fill
+        var children = spPr.ChildElements.ToList();
+        var xfrmIdx = children.FindIndex(c => c is DocumentFormat.OpenXml.Drawing.Transform2D);
+        var custGeomIdx = children.FindIndex(c => c is DocumentFormat.OpenXml.Drawing.CustomGeometry);
+        var fillIdx = children.FindIndex(c => c is DocumentFormat.OpenXml.Drawing.SolidFill);
+        var lnIdx = children.FindIndex(c => c is DocumentFormat.OpenXml.Drawing.Outline);
+
+        custGeomIdx.Should().BeGreaterThan(xfrmIdx,
+            "custGeom must come after xfrm in OOXML element order");
+        custGeomIdx.Should().BeLessThan(fillIdx,
+            "custGeom must come before solidFill in OOXML element order");
+        custGeomIdx.Should().BeLessThan(lnIdx,
+            "custGeom must come before ln in OOXML element order");
     }
 
     // ==================== Shape Image Fill ====================
@@ -1894,5 +2327,449 @@ public class PptxFunctionalTests : IDisposable
         Reopen();
         var slide = _handler.Get("/slide[1]");
         slide.Children.Should().BeEmpty();
+    }
+
+    // ==================== Animation trigger structure tests ====================
+
+    [Fact]
+    public void Animation_WithTrigger_NestedInsidePreviousAnimationPar()
+    {
+        // Setup: 3 shapes with click, after, with triggers
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "A", ["animation"] = "fade-entrance-500"
+        });
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "B", ["animation"] = "fade-entrance-500-after"
+        });
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "C", ["animation"] = "fade-entrance-500-with"
+        });
+
+        // Access the raw slide XML to inspect timing structure
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var timing = slidePart.Slide.GetFirstChild<DocumentFormat.OpenXml.Presentation.Timing>()!;
+
+        // Find mainSeq
+        var mainSeqCTn = timing.Descendants<DocumentFormat.OpenXml.Presentation.CommonTimeNode>()
+            .First(c => c.NodeType?.Value == DocumentFormat.OpenXml.Presentation.TimeNodeValues.MainSequence);
+
+        // mainSeq should have exactly 2 direct child pars:
+        //   par[0]: click group (shape A) — delay="indefinite"
+        //   par[1]: after group (shape B + shape C nested) — delay="0"
+        // Shape C (with) should NOT be a 3rd separate par sibling
+        var topPars = mainSeqCTn.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        topPars.Should().HaveCount(2,
+            "withEffect animation should be nested inside the previous par, not a separate sibling");
+
+        // Verify par[0] is click (delay=indefinite)
+        var par0Delay = topPars[0].CommonTimeNode!.StartConditionList!
+            .Elements<DocumentFormat.OpenXml.Presentation.Condition>().First().Delay!.Value;
+        par0Delay.Should().Be("indefinite", "first animation group should be click-triggered");
+
+        // Verify par[1] is after (delay=0) and contains BOTH shape B and shape C animations
+        var par1Delay = topPars[1].CommonTimeNode!.StartConditionList!
+            .Elements<DocumentFormat.OpenXml.Presentation.Condition>().First().Delay!.Value;
+        par1Delay.Should().Be("0", "second animation group should be after-triggered");
+
+        // par[1] should contain 2 mid-pars (one for B=afterEffect, one for C=withEffect)
+        var par1Children = topPars[1].CommonTimeNode!.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        par1Children.Should().HaveCount(2,
+            "after group should contain both the afterEffect and the withEffect animations");
+    }
+
+    [Fact]
+    public void Animation_WithTrigger_NestedInsidePreviousAnimationPar_Persist()
+    {
+        // Same as above but verify after reopen
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "A", ["animation"] = "fade-entrance-500"
+        });
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "B", ["animation"] = "fade-entrance-500-after"
+        });
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "C", ["animation"] = "fade-entrance-500-with"
+        });
+
+        Reopen();
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var timing = slidePart.Slide.GetFirstChild<DocumentFormat.OpenXml.Presentation.Timing>()!;
+
+        var mainSeqCTn = timing.Descendants<DocumentFormat.OpenXml.Presentation.CommonTimeNode>()
+            .First(c => c.NodeType?.Value == DocumentFormat.OpenXml.Presentation.TimeNodeValues.MainSequence);
+
+        var topPars = mainSeqCTn.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        topPars.Should().HaveCount(2,
+            "withEffect should remain nested after persist, not become a separate sibling");
+    }
+
+    [Fact]
+    public void Animation_AfterTrigger_IsAutoPlayNotClick()
+    {
+        // Verify "after" trigger creates delay="0" (auto-play), not delay="indefinite" (click)
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "Click me", ["animation"] = "fade-entrance-500"
+        });
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "Auto after", ["animation"] = "fade-entrance-500-after"
+        });
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var timing = slidePart.Slide.GetFirstChild<DocumentFormat.OpenXml.Presentation.Timing>()!;
+
+        var mainSeqCTn = timing.Descendants<DocumentFormat.OpenXml.Presentation.CommonTimeNode>()
+            .First(c => c.NodeType?.Value == DocumentFormat.OpenXml.Presentation.TimeNodeValues.MainSequence);
+
+        var topPars = mainSeqCTn.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        topPars.Should().HaveCount(2);
+
+        // par[0] = click (indefinite), par[1] = after (0)
+        topPars[0].CommonTimeNode!.StartConditionList!
+            .Elements<DocumentFormat.OpenXml.Presentation.Condition>().First()
+            .Delay!.Value.Should().Be("indefinite");
+        topPars[1].CommonTimeNode!.StartConditionList!
+            .Elements<DocumentFormat.OpenXml.Presentation.Condition>().First()
+            .Delay!.Value.Should().Be("0");
+
+        // Verify nodeType values
+        var effectNodes = timing.Descendants<DocumentFormat.OpenXml.Presentation.CommonTimeNode>()
+            .Where(c => c.PresetId != null).ToList();
+        effectNodes.Should().HaveCount(2);
+        effectNodes[0].NodeType!.Value.Should().Be(DocumentFormat.OpenXml.Presentation.TimeNodeValues.ClickEffect);
+        effectNodes[1].NodeType!.Value.Should().Be(DocumentFormat.OpenXml.Presentation.TimeNodeValues.AfterEffect);
+    }
+
+    [Fact]
+    public void Animation_ClickThenWith_OnlyOneClickGroup()
+    {
+        // Repro: cool-morph slide 3 — TitleText=click, SubText=with
+        // Bug: with animation became a separate p:par sibling, consuming an extra click
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "Make it", ["animation"] = "zoom-entrance-600"
+        });
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "Subtitle", ["animation"] = "fade-entrance-500-with"
+        });
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var timing = slidePart.Slide.GetFirstChild<DocumentFormat.OpenXml.Presentation.Timing>()!;
+
+        var mainSeqCTn = timing.Descendants<DocumentFormat.OpenXml.Presentation.CommonTimeNode>()
+            .First(c => c.NodeType?.Value == DocumentFormat.OpenXml.Presentation.TimeNodeValues.MainSequence);
+
+        // Should be exactly 1 top-level par (one click group),
+        // not 2 (which would mean the with-animation consumes an extra click)
+        var topPars = mainSeqCTn.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        topPars.Should().HaveCount(1,
+            "with-animation should be nested inside the click group, not a separate click step");
+
+        // The single click group should contain 2 mid-pars (zoom + fade)
+        var midPars = topPars[0].CommonTimeNode!.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        midPars.Should().HaveCount(2,
+            "click group should contain both the click animation and the with animation");
+    }
+
+    [Fact]
+    public void Animation_ClickThenWith_OnlyOneClickGroup_Persist()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "Make it", ["animation"] = "zoom-entrance-600"
+        });
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "Subtitle", ["animation"] = "fade-entrance-500-with"
+        });
+
+        Reopen();
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var timing = slidePart.Slide.GetFirstChild<DocumentFormat.OpenXml.Presentation.Timing>()!;
+
+        var mainSeqCTn = timing.Descendants<DocumentFormat.OpenXml.Presentation.CommonTimeNode>()
+            .First(c => c.NodeType?.Value == DocumentFormat.OpenXml.Presentation.TimeNodeValues.MainSequence);
+
+        var topPars = mainSeqCTn.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        topPars.Should().HaveCount(1,
+            "with-animation should remain nested after persist, not become a separate click step");
+    }
+
+    [Fact]
+    public void MotionPath_WithTrigger_NestedInsidePreviousAnimationPar()
+    {
+        // motionPath with "with" trigger has the same bug as shape animation
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "A", ["animation"] = "fade-entrance-500"
+        });
+        _handler.Add("/slide[1]", "shape", null, new() { ["text"] = "B" });
+
+        // Set motionPath with "with" trigger on shape B
+        _handler.Set("/slide[1]/shape[2]", new()
+        {
+            ["motionPath"] = "M 0.0 0.0 L 0.5 0.5 E-500-with"
+        });
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var timing = slidePart.Slide.GetFirstChild<DocumentFormat.OpenXml.Presentation.Timing>()!;
+
+        var mainSeqCTn = timing.Descendants<DocumentFormat.OpenXml.Presentation.CommonTimeNode>()
+            .First(c => c.NodeType?.Value == DocumentFormat.OpenXml.Presentation.TimeNodeValues.MainSequence);
+
+        // Should be 1 par (click group containing both the fade and the motionPath),
+        // not 2 separate pars
+        var topPars = mainSeqCTn.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        topPars.Should().HaveCount(1,
+            "motionPath with 'with' trigger should be nested inside the click group, not a separate sibling");
+    }
+
+    [Fact]
+    public void MotionPath_WithTrigger_NestedInsidePreviousAnimationPar_Persist()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "shape", null, new()
+        {
+            ["text"] = "A", ["animation"] = "fade-entrance-500"
+        });
+        _handler.Add("/slide[1]", "shape", null, new() { ["text"] = "B" });
+        _handler.Set("/slide[1]/shape[2]", new()
+        {
+            ["motionPath"] = "M 0.0 0.0 L 0.5 0.5 E-500-with"
+        });
+
+        Reopen();
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var timing = slidePart.Slide.GetFirstChild<DocumentFormat.OpenXml.Presentation.Timing>()!;
+
+        var mainSeqCTn = timing.Descendants<DocumentFormat.OpenXml.Presentation.CommonTimeNode>()
+            .First(c => c.NodeType?.Value == DocumentFormat.OpenXml.Presentation.TimeNodeValues.MainSequence);
+
+        var topPars = mainSeqCTn.ChildTimeNodeList!
+            .Elements<DocumentFormat.OpenXml.Presentation.ParallelTimeNode>().ToList();
+        topPars.Should().HaveCount(1,
+            "motionPath with 'with' trigger should remain nested after persist");
+    }
+
+    // ==================== Slide Zoom ====================
+
+    [Fact]
+    public void Add_Zoom_ReturnsCorrectPath()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        var path = _handler.Add("/slide[1]", "zoom", null, new() { ["target"] = "2" });
+        path.Should().Be("/slide[1]/zoom[1]");
+    }
+
+    [Fact]
+    public void Add_Zoom_GetReturnsZoomType()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new() { ["target"] = "2" });
+
+        var node = _handler.Get("/slide[1]/zoom[1]");
+        node.Should().NotBeNull();
+        node.Type.Should().Be("zoom");
+        node.Format.Should().ContainKey("target");
+        node.Format["target"].Should().Be(2);
+    }
+
+    [Fact]
+    public void Add_Zoom_WithPosition_PositionIsReadBack()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new()
+        {
+            ["target"] = "2", ["x"] = "3cm", ["y"] = "5cm",
+            ["width"] = "9cm", ["height"] = "5cm"
+        });
+
+        var node = _handler.Get("/slide[1]/zoom[1]");
+        node.Format["x"].Should().Be("3cm");
+        node.Format["y"].Should().Be("5cm");
+        node.Format["width"].Should().Be("9cm");
+        node.Format["height"].Should().Be("5cm");
+    }
+
+    [Fact]
+    public void Add_Zoom_WithReturnToParent_PropertyIsReadBack()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new()
+        {
+            ["target"] = "2", ["returntoparent"] = "true"
+        });
+
+        var node = _handler.Get("/slide[1]/zoom[1]");
+        node.Format["returnToParent"].Should().Be("1");
+    }
+
+    [Fact]
+    public void Add_Zoom_WithTransitionDur_PropertyIsReadBack()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new()
+        {
+            ["target"] = "2", ["transitiondur"] = "2000"
+        });
+
+        var node = _handler.Get("/slide[1]/zoom[1]");
+        node.Format["transitionDur"].Should().Be("2000");
+    }
+
+    [Fact]
+    public void Add_Zoom_MultipleTargets_QueryReturnsAll()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new() { ["target"] = "2" });
+        _handler.Add("/slide[1]", "zoom", null, new() { ["target"] = "3" });
+
+        var results = _handler.Query("zoom");
+        results.Should().HaveCount(2);
+        results[0].Format["target"].Should().Be(2);
+        results[1].Format["target"].Should().Be(3);
+    }
+
+    [Fact]
+    public void Set_Zoom_ReturnToParentIsUpdated()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new() { ["target"] = "2" });
+
+        var before = _handler.Get("/slide[1]/zoom[1]");
+        before.Format["returnToParent"].Should().Be("0");
+
+        _handler.Set("/slide[1]/zoom[1]", new() { ["returnToParent"] = "true" });
+
+        var after = _handler.Get("/slide[1]/zoom[1]");
+        after.Format["returnToParent"].Should().Be("1");
+    }
+
+    [Fact]
+    public void Set_Zoom_TransitionDurIsUpdated()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new() { ["target"] = "2" });
+
+        _handler.Set("/slide[1]/zoom[1]", new() { ["transitionDur"] = "500" });
+
+        var node = _handler.Get("/slide[1]/zoom[1]");
+        node.Format["transitionDur"].Should().Be("500");
+    }
+
+    [Fact]
+    public void Set_Zoom_PositionIsUpdated()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new()
+        {
+            ["target"] = "2", ["x"] = "1cm", ["y"] = "1cm"
+        });
+
+        _handler.Set("/slide[1]/zoom[1]", new() { ["x"] = "5cm", ["y"] = "8cm" });
+
+        var node = _handler.Get("/slide[1]/zoom[1]");
+        node.Format["x"].Should().Be("5cm");
+        node.Format["y"].Should().Be("8cm");
+    }
+
+    [Fact]
+    public void Remove_Zoom_ElementIsRemoved()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new() { ["target"] = "2" });
+        _handler.Add("/slide[1]", "zoom", null, new() { ["target"] = "3" });
+
+        _handler.Query("zoom").Should().HaveCount(2);
+
+        _handler.Remove("/slide[1]/zoom[1]");
+
+        var remaining = _handler.Query("zoom");
+        remaining.Should().HaveCount(1);
+        remaining[0].Format["target"].Should().Be(3);
+    }
+
+    [Fact]
+    public void Zoom_Persist_SurvivesReopenFile()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/", "slide", null, new());
+        _handler.Add("/slide[1]", "zoom", null, new()
+        {
+            ["target"] = "2", ["x"] = "3cm", ["y"] = "5cm",
+            ["width"] = "9cm", ["height"] = "5cm",
+            ["returntoparent"] = "true", ["transitiondur"] = "1500"
+        });
+
+        Reopen();
+
+        var node = _handler.Get("/slide[1]/zoom[1]");
+        node.Should().NotBeNull();
+        node.Type.Should().Be("zoom");
+        node.Format["target"].Should().Be(2);
+        node.Format["x"].Should().Be("3cm");
+        node.Format["y"].Should().Be("5cm");
+        node.Format["width"].Should().Be("9cm");
+        node.Format["height"].Should().Be("5cm");
+        node.Format["returnToParent"].Should().Be("1");
+        node.Format["transitionDur"].Should().Be("1500");
     }
 }

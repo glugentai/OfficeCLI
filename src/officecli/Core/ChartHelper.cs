@@ -178,6 +178,29 @@ internal static class ChartHelper
                 chartElement = BuildRadarChart(radarStyle, categories, seriesData, catAxisId, valAxisId, colors);
                 break;
             }
+            case "column3d" or "bar3d":
+            {
+                var dir3d = kind == "bar3d" ? C.BarDirectionValues.Bar : C.BarDirectionValues.Column;
+                var bar3d = new C.Bar3DChart(
+                    new C.BarDirection { Val = dir3d },
+                    new C.BarGrouping { Val = stacked ? C.BarGroupingValues.Stacked
+                        : percentStacked ? C.BarGroupingValues.PercentStacked
+                        : C.BarGroupingValues.Clustered },
+                    new C.VaryColors { Val = false }
+                );
+                for (int si = 0; si < seriesData.Count; si++)
+                {
+                    var s = BuildBarSeries((uint)si, seriesData[si].name, categories, seriesData[si].values,
+                        colors != null && si < colors.Length ? colors[si] : null);
+                    bar3d.AppendChild(s);
+                }
+                bar3d.AppendChild(new C.GapWidth { Val = 150 });
+                bar3d.AppendChild(new C.AxisId { Val = catAxisId });
+                bar3d.AppendChild(new C.AxisId { Val = valAxisId });
+                bar3d.AppendChild(new C.AxisId { Val = 0 });
+                chartElement = bar3d;
+                break;
+            }
             case "stock":
                 chartElement = BuildStockChart(categories, seriesData, catAxisId, valAxisId);
                 needsAxes = true;
@@ -564,6 +587,87 @@ internal static class ChartHelper
             serText.InsertAfterSelf(spPr);
         else
             series.PrependChild(spPr);
+    }
+
+    /// <summary>
+    /// Build a fill element: solid if single color, gradient if contains '-'.
+    /// Gradient format: "color1-color2[:angle]" or "color1-color2-color3[:angle]"
+    /// </summary>
+    private static OpenXmlElement BuildFillElement(string value)
+    {
+        if (value.Equals("none", StringComparison.OrdinalIgnoreCase))
+            return new Drawing.NoFill();
+
+        // Check if it's a gradient (contains - but not a single hex with alpha like 80FF0000)
+        var colonIdx = value.LastIndexOf(':');
+        var colorPart = colonIdx > 6 ? value[..colonIdx] : value;
+        if (colorPart.Contains('-') && colorPart.Split('-').Length >= 2 && colorPart.Split('-')[0].Length <= 8)
+        {
+            // Gradient: reuse ApplySeriesGradient logic
+            var anglePart = 0;
+            if (colonIdx > 0 && int.TryParse(value[(colonIdx + 1)..], out var angle))
+                anglePart = angle;
+            else
+                colonIdx = -1;
+
+            var colors = (colonIdx > 0 ? value[..colonIdx] : value).Split('-').Select(c => c.Trim()).ToArray();
+            var gradFill = new Drawing.GradientFill();
+            var gsLst = new Drawing.GradientStopList();
+            for (int i = 0; i < colors.Length; i++)
+            {
+                var pos = colors.Length == 1 ? 0 : (int)(i * 100000.0 / (colors.Length - 1));
+                var gs = new Drawing.GradientStop { Position = pos };
+                gs.AppendChild(BuildChartColorElement(colors[i]));
+                gsLst.AppendChild(gs);
+            }
+            gradFill.AppendChild(gsLst);
+            gradFill.AppendChild(new Drawing.LinearGradientFill { Angle = anglePart * 60000, Scaled = true });
+            return gradFill;
+        }
+
+        // Solid fill
+        var solidFill = new Drawing.SolidFill();
+        solidFill.AppendChild(BuildChartColorElement(value));
+        return solidFill;
+    }
+
+    /// <summary>
+    /// Apply text properties (font, size, color) to all axis labels.
+    /// Format: "size:color:fontname" e.g. "10:8B949E:Helvetica Neue" or "10:CCCCCC"
+    /// </summary>
+    internal static void ApplyAxisTextProperties(OpenXmlCompositeElement axis, string value)
+    {
+        axis.RemoveAllChildren<C.TextProperties>();
+        var parts = value.Split(':');
+        var fontSize = parts.Length > 0 && int.TryParse(parts[0], out var fs) ? fs * 100 : 1000;
+        var color = parts.Length > 1 ? parts[1] : null;
+        var fontName = parts.Length > 2 ? parts[2] : null;
+
+        var defRp = new Drawing.DefaultRunProperties { FontSize = fontSize };
+        if (!string.IsNullOrEmpty(color))
+        {
+            var solidFill = new Drawing.SolidFill();
+            solidFill.AppendChild(BuildChartColorElement(color));
+            defRp.AppendChild(solidFill);
+        }
+        if (!string.IsNullOrEmpty(fontName))
+        {
+            defRp.AppendChild(new Drawing.LatinFont { Typeface = fontName });
+            defRp.AppendChild(new Drawing.EastAsianFont { Typeface = fontName });
+        }
+
+        var tp = new C.TextProperties(
+            new Drawing.BodyProperties(),
+            new Drawing.ListStyle(),
+            new Drawing.Paragraph(new Drawing.ParagraphProperties(defRp))
+        );
+
+        // Insert before C.CrossingAxis or at end
+        var crossAxis = axis.GetFirstChild<C.CrossingAxis>();
+        if (crossAxis != null)
+            axis.InsertBefore(tp, crossAxis);
+        else
+            axis.AppendChild(tp);
     }
 
     /// <summary>
@@ -1071,6 +1175,106 @@ internal static class ChartHelper
                         chart.PrependChild(BuildChartTitle(value));
                     break;
 
+                case "title.font" or "titlefont":
+                case "title.size" or "titlesize":
+                case "title.color" or "titlecolor":
+                case "title.bold" or "titlebold":
+                case "title.glow" or "titleglow":
+                case "title.shadow" or "titleshadow":
+                {
+                    var ctitle = chart.GetFirstChild<C.Title>();
+                    if (ctitle == null) { unsupported.Add(key); break; }
+                    foreach (var run in ctitle.Descendants<Drawing.Run>())
+                    {
+                        var rPr = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
+                        var normalizedKey = key.Replace("title.", "").Replace("title", "").ToLowerInvariant();
+                        switch (normalizedKey)
+                        {
+                            case "font":
+                                rPr.RemoveAllChildren<Drawing.LatinFont>();
+                                rPr.RemoveAllChildren<Drawing.EastAsianFont>();
+                                rPr.AppendChild(new Drawing.LatinFont { Typeface = value });
+                                rPr.AppendChild(new Drawing.EastAsianFont { Typeface = value });
+                                break;
+                            case "size":
+                                rPr.FontSize = (int)Math.Round(ParseHelpers.SafeParseDouble(value, "title.size") * 100);
+                                break;
+                            case "color":
+                            {
+                                rPr.RemoveAllChildren<Drawing.SolidFill>();
+                                var (rgb, _) = ParseHelpers.SanitizeColorForOoxml(value);
+                                DrawingEffectsHelper.InsertFillInRunProperties(rPr,
+                                    new Drawing.SolidFill(new Drawing.RgbColorModelHex { Val = rgb }));
+                                break;
+                            }
+                            case "bold":
+                                rPr.Bold = ParseHelpers.IsTruthy(value);
+                                break;
+                            case "glow":
+                                DrawingEffectsHelper.ApplyTextEffect<Drawing.Glow>(run, value,
+                                    () => DrawingEffectsHelper.BuildGlow(value, c =>
+                                    {
+                                        var (rgb, alpha) = ParseHelpers.SanitizeColorForOoxml(c);
+                                        var clr = new Drawing.RgbColorModelHex { Val = rgb };
+                                        if (alpha.HasValue) clr.AppendChild(new Drawing.Alpha { Val = alpha.Value });
+                                        return clr;
+                                    }));
+                                break;
+                            case "shadow":
+                                DrawingEffectsHelper.ApplyTextEffect<Drawing.OuterShadow>(run, value,
+                                    () => DrawingEffectsHelper.BuildOuterShadow(value, c =>
+                                    {
+                                        var (rgb, alpha) = ParseHelpers.SanitizeColorForOoxml(c);
+                                        var clr = new Drawing.RgbColorModelHex { Val = rgb };
+                                        if (alpha.HasValue) clr.AppendChild(new Drawing.Alpha { Val = alpha.Value });
+                                        return clr;
+                                    }));
+                                break;
+                        }
+                        // Also update DefaultRunProperties for consistency
+                        var defRp = ctitle.Descendants<Drawing.DefaultRunProperties>().FirstOrDefault();
+                        if (defRp != null)
+                        {
+                            switch (normalizedKey)
+                            {
+                                case "size": defRp.FontSize = rPr.FontSize; break;
+                                case "bold": defRp.Bold = rPr.Bold; break;
+                            }
+                        }
+                    }
+                    break;
+                }
+
+                case "legendfont" or "legend.font":
+                {
+                    // Format: "size:color:fontname" e.g. "10:CCCCCC:Helvetica Neue"
+                    var legend = chart.GetFirstChild<C.Legend>();
+                    if (legend == null) { unsupported.Add(key); break; }
+                    legend.RemoveAllChildren<C.TextProperties>();
+                    var parts = value.Split(':');
+                    var fontSize = parts.Length > 0 && int.TryParse(parts[0], out var fs) ? fs * 100 : 1000;
+                    var color = parts.Length > 1 ? parts[1] : null;
+                    var fontName = parts.Length > 2 ? parts[2] : null;
+                    var defRp = new Drawing.DefaultRunProperties { FontSize = fontSize };
+                    if (!string.IsNullOrEmpty(color))
+                    {
+                        var sf = new Drawing.SolidFill();
+                        sf.AppendChild(BuildChartColorElement(color));
+                        defRp.AppendChild(sf);
+                    }
+                    if (!string.IsNullOrEmpty(fontName))
+                    {
+                        defRp.AppendChild(new Drawing.LatinFont { Typeface = fontName });
+                        defRp.AppendChild(new Drawing.EastAsianFont { Typeface = fontName });
+                    }
+                    legend.AppendChild(new C.TextProperties(
+                        new Drawing.BodyProperties(),
+                        new Drawing.ListStyle(),
+                        new Drawing.Paragraph(new Drawing.ParagraphProperties(defRp))
+                    ));
+                    break;
+                }
+
                 case "legend":
                     chart.RemoveAllChildren<C.Legend>();
                     if (!value.Equals("false", StringComparison.OrdinalIgnoreCase) &&
@@ -1180,6 +1384,20 @@ internal static class ChartHelper
                         var tp = BuildLabelTextProperties(value);
                         dl.PrependChild(tp);
                     }
+                    break;
+                }
+
+                case "axisfont" or "axis.font":
+                {
+                    // Format: "size:color:fontname" e.g. "10:8B949E:Helvetica Neue"
+                    var plotArea2 = chart.GetFirstChild<C.PlotArea>();
+                    if (plotArea2 == null) { unsupported.Add(key); break; }
+                    foreach (var axis in plotArea2.Elements<C.CategoryAxis>())
+                        ApplyAxisTextProperties(axis, value);
+                    foreach (var axis in plotArea2.Elements<C.ValueAxis>())
+                        ApplyAxisTextProperties(axis, value);
+                    foreach (var axis in plotArea2.Elements<C.DateAxis>())
+                        ApplyAxisTextProperties(axis, value);
                     break;
                 }
 
@@ -1350,13 +1568,9 @@ internal static class ChartHelper
                 {
                     var plotArea2 = chart.GetFirstChild<C.PlotArea>();
                     if (plotArea2 == null) { unsupported.Add(key); break; }
-                    // plotArea uses C.ShapeProperties (not C.ChartShapeProperties)
                     plotArea2.RemoveAllChildren<C.ShapeProperties>();
                     var spPr = new C.ShapeProperties();
-                    var solidFill = new Drawing.SolidFill();
-                    solidFill.AppendChild(BuildChartColorElement(value));
-                    spPr.AppendChild(solidFill);
-                    // Schema order: layout, charts, axes, dTable, spPr, extLst
+                    spPr.AppendChild(BuildFillElement(value));
                     var extLst = plotArea2.GetFirstChild<C.ExtensionList>();
                     if (extLst != null)
                         plotArea2.InsertBefore(spPr, extLst);
@@ -1369,9 +1583,7 @@ internal static class ChartHelper
                 {
                     chartSpace!.RemoveAllChildren<C.ChartShapeProperties>();
                     var spPr = new C.ChartShapeProperties();
-                    var solidFill = new Drawing.SolidFill();
-                    solidFill.AppendChild(BuildChartColorElement(value));
-                    spPr.AppendChild(solidFill);
+                    spPr.AppendChild(BuildFillElement(value));
                     chartSpace.InsertBefore(spPr, chart);
                     break;
                 }
@@ -1468,6 +1680,112 @@ internal static class ChartHelper
                         .Where(e => e.LocalName == "ser").ToList();
                     for (int si = 0; si < Math.Min(gradList.Length, allSer.Count); si++)
                         ApplySeriesGradient(allSer[si], gradList[si]);
+                    break;
+                }
+
+                case "view3d" or "camera" or "perspective":
+                {
+                    // Format: "rotX,rotY,perspective" e.g. "15,20,30" or just "20" for perspective
+                    var v3dParts = value.Split(',');
+                    chart.RemoveAllChildren<C.View3D>();
+                    var view3d = new C.View3D();
+                    if (v3dParts.Length >= 1 && int.TryParse(v3dParts[0], out var rx))
+                        view3d.AppendChild(new C.RotateX { Val = (sbyte)rx });
+                    if (v3dParts.Length >= 2 && int.TryParse(v3dParts[1], out var ry))
+                        view3d.AppendChild(new C.RotateY { Val = (ushort)ry });
+                    if (v3dParts.Length >= 3 && int.TryParse(v3dParts[2], out var persp))
+                        view3d.AppendChild(new C.Perspective { Val = (byte)persp });
+                    else if (v3dParts.Length == 1 && int.TryParse(v3dParts[0], out var p))
+                        view3d.AppendChild(new C.Perspective { Val = (byte)p });
+                    chart.PrependChild(view3d);
+                    break;
+                }
+
+                case "areafill" or "area.fill":
+                {
+                    // Apply gradient fill to area chart series. Format: "color1-color2[:angle]"
+                    var plotArea2 = chart.GetFirstChild<C.PlotArea>();
+                    if (plotArea2 == null) { unsupported.Add(key); break; }
+                    foreach (var ser in plotArea2.Descendants<OpenXmlCompositeElement>().Where(e => e.LocalName == "ser"))
+                    {
+                        var spPr = ser.GetFirstChild<C.ChartShapeProperties>();
+                        if (spPr == null) { spPr = new C.ChartShapeProperties(); ser.AppendChild(spPr); }
+                        spPr.RemoveAllChildren<Drawing.SolidFill>();
+                        spPr.RemoveAllChildren<Drawing.GradientFill>();
+                        spPr.PrependChild(BuildFillElement(value));
+                    }
+                    break;
+                }
+
+                // ---- Series visual effects ----
+                case "series.shadow" or "seriesshadow":
+                {
+                    // Apply shadow to all series bars. Format same as shape shadow: "COLOR-BLUR-ANGLE-DIST-OPACITY"
+                    var plotArea2 = chart.GetFirstChild<C.PlotArea>();
+                    if (plotArea2 == null) { unsupported.Add(key); break; }
+                    foreach (var ser in plotArea2.Descendants<OpenXmlCompositeElement>().Where(e => e.LocalName == "ser"))
+                    {
+                        var spPr = ser.GetFirstChild<C.ChartShapeProperties>();
+                        if (spPr == null) { spPr = new C.ChartShapeProperties(); ser.AppendChild(spPr); }
+                        var effectList = spPr.GetFirstChild<Drawing.EffectList>() ?? new Drawing.EffectList();
+                        if (effectList.Parent == null) spPr.AppendChild(effectList);
+                        effectList.RemoveAllChildren<Drawing.OuterShadow>();
+                        if (!value.Equals("none", StringComparison.OrdinalIgnoreCase))
+                            effectList.AppendChild(DrawingEffectsHelper.BuildOuterShadow(value, BuildChartColorElement));
+                    }
+                    break;
+                }
+
+                case "series.outline" or "seriesoutline":
+                {
+                    // Apply outline to all series bars. Format: "COLOR" or "COLOR-WIDTH" e.g. "FFFFFF-1"
+                    var plotArea2 = chart.GetFirstChild<C.PlotArea>();
+                    if (plotArea2 == null) { unsupported.Add(key); break; }
+                    var outParts = value.Split('-');
+                    foreach (var ser in plotArea2.Descendants<OpenXmlCompositeElement>().Where(e => e.LocalName == "ser"))
+                    {
+                        var spPr = ser.GetFirstChild<C.ChartShapeProperties>();
+                        if (spPr == null) { spPr = new C.ChartShapeProperties(); ser.AppendChild(spPr); }
+                        spPr.RemoveAllChildren<Drawing.Outline>();
+                        if (!value.Equals("none", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var widthPt = outParts.Length > 1 && double.TryParse(outParts[1], System.Globalization.CultureInfo.InvariantCulture, out var w) ? w : 0.5;
+                            var outline = new Drawing.Outline { Width = (int)(widthPt * 12700) };
+                            var sf = new Drawing.SolidFill();
+                            sf.AppendChild(BuildChartColorElement(outParts[0]));
+                            outline.AppendChild(sf);
+                            spPr.AppendChild(outline);
+                        }
+                    }
+                    break;
+                }
+
+                case "gapwidth" or "gap":
+                {
+                    var plotArea2 = chart.GetFirstChild<C.PlotArea>();
+                    if (plotArea2 == null) { unsupported.Add(key); break; }
+                    if (!int.TryParse(value, out var gw)) throw new ArgumentException($"Invalid gapWidth: '{value}'. Expected integer (0-500).");
+                    foreach (var gapEl in plotArea2.Descendants<C.GapWidth>())
+                        gapEl.Val = (ushort)gw;
+                    break;
+                }
+
+                case "overlap":
+                {
+                    var plotArea2 = chart.GetFirstChild<C.PlotArea>();
+                    if (plotArea2 == null) { unsupported.Add(key); break; }
+                    if (!int.TryParse(value, out var ov)) throw new ArgumentException($"Invalid overlap: '{value}'. Expected integer (-100 to 100).");
+                    foreach (var barChart in plotArea2.Elements<OpenXmlCompositeElement>().Where(e => e.LocalName.Contains("barChart") || e.LocalName.Contains("BarChart")))
+                    {
+                        var overlapEl = barChart.GetFirstChild<C.Overlap>();
+                        if (overlapEl != null) overlapEl.Val = (sbyte)ov;
+                        else
+                        {
+                            var gapEl = barChart.GetFirstChild<C.GapWidth>();
+                            if (gapEl != null) gapEl.InsertAfterSelf(new C.Overlap { Val = (sbyte)ov });
+                            else barChart.AppendChild(new C.Overlap { Val = (sbyte)ov });
+                        }
+                    }
                     break;
                 }
 

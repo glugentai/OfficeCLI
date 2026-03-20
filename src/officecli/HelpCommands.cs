@@ -701,11 +701,29 @@ Data validation (/SheetName/validation[N]):
   operator (between|equal|greaterThan|...), formula1, formula2,
   allowBlank, showError, errorTitle, error, showInput, promptTitle, prompt
 
+Shape (/SheetName/shape[N]):
+  text           Replace text content (supports \n)
+  font           Font typeface
+  size           Font size in points
+  bold           true/false
+  italic         true/false
+  color          Hex RGB text color (e.g. FF0000)
+  fill           Hex RGB shape fill or "none"
+  align          Text alignment: left/center/right
+  name           Shape name
+  shadow         Shadow: "COLOR-BLUR-ANGLE-DIST-OPACITY" or "none"
+  glow           Glow: "COLOR-RADIUS-OPACITY" or "none"
+  reflection     Reflection: tight/half/full or "none"
+  softEdge       Soft edge radius in pt or "none"
+  x, y, width, height  Position (col/row offset) and size (col/row span)
+
 Picture (/SheetName/picture[N]):
   x, y (col/row offset), width, height (col/row span), alt
   rotation       Rotation angle in degrees (e.g. "45", "90")
-  shadow         Shadow effect: "color:blur:dist:dir" (e.g. "000000:4:3:45") or "true"/"none"
-  glow           Glow effect: "color:radius" (e.g. "4472C4:6") or "none"
+  shadow         Shadow: "COLOR-BLUR-DIST-DIR" or "none"
+  glow           Glow: "COLOR-RADIUS" or "none"
+  reflection     Reflection: tight/half/full or "none"
+  softEdge       Soft edge radius in pt or "none"
 
 Table (/SheetName/table[N]):
   name, displayName, style, ref
@@ -718,7 +736,15 @@ Named range (/namedrange[N] or /namedrange[Name]):
 
 Chart (/SheetName/chart[N]):
   title        Chart title text (or "none" to remove)
-  legend       Legend position: top/bottom/left/right or "none" to remove
+  title.font   Title font typeface
+  title.size   Title font size in pt
+  title.color  Title font color (hex)
+  title.bold   Title bold (true/false)
+  title.glow   Title glow: "COLOR-RADIUS-OPACITY" (e.g. "00D2FF-6-60")
+  title.shadow Title shadow: "COLOR-BLUR-ANGLE-DIST-OPACITY"
+  legend       Legend position: top/bottom/left/right or "none"
+  legendFont   Legend font: "size:color:fontname" (e.g. "9:8B949E:Helvetica Neue")
+  axisFont     Axis label font: "size:color:fontname" (e.g. "10:58626E:Arial")
   categories   Update category labels (comma-separated)
   data         Replace all series: "S1:1,2;S2:3,4"
   series1..N   Update individual series: "NewName:1,2,3" or just "1,2,3"
@@ -731,18 +757,25 @@ Chart (/SheetName/chart[N]):
   axisMin, axisMax  Value axis scale bounds
   majorUnit, minorUnit  Tick mark spacing
   axisNumFmt   Value axis number format (e.g. "0.0", "$#,##0")
-  gridlines    Major gridlines: true/none or "color:widthPt:dash" (e.g. "CCCCCC:0.5:dash")
+  gridlines    Major gridlines: true/none or "color:widthPt:dash"
   minorGridlines  Minor gridlines: true/none or "color:widthPt:dash"
-  plotFill     Plot area background color (hex)
-  chartFill    Chart area background color (hex)
+  plotFill     Plot area fill: hex solid or gradient "C1-C2[:angle]"
+  chartFill    Chart area fill: hex solid or gradient "C1-C2[:angle]"
   lineWidth    Series line width in pt (e.g. "2.5")
   lineDash     Series line dash: solid, dot, dash, dashdot, longdash
   marker       Series marker: "style:size:color" (e.g. "circle:8:FF0000")
   markerSize   Marker size (2-72)
   style        Chart style ID (1-48)
+  opacity      Series fill opacity (0.0-1.0)
   transparency Series fill transparency (0-100, %)
-  gradient     Series gradient: "color1-color2:angle" (e.g. "FF0000-0000FF:90")
-  gradients    Per-series gradients (semicolon-separated): "FF0000-0000FF;00FF00-FFFF00"
+  gradient     Series gradient: "C1-C2[:angle]" (all series)
+  gradients    Per-series gradients (semicolon-separated): "C1-C2;C3-C4"
+  series.shadow  Series bar shadow: "COLOR-BLUR-ANGLE-DIST-OPACITY" or "none"
+  series.outline Series bar outline: "COLOR-WIDTH" (e.g. "FFFFFF-0.5") or "none"
+  gap          Bar gap width (0-500, default 150)
+  overlap      Bar overlap (-100 to 100)
+  view3d       3D camera: "rotX,rotY,perspective" (e.g. "15,20,30")
+  areafill     Area chart series fill: gradient "C1-C2[:angle]"
   secondary    Secondary axis: series indices (e.g. "2,3")
 
 PivotTable (/SheetName/pivottable[N]):
@@ -804,6 +837,13 @@ Types and properties:
     allowBlank (bool), showError (bool), errorTitle, error,
     showInput (bool), promptTitle, prompt
 
+  shape (textbox)  -- parent: /SheetName
+    text (supports \n), name, font, size, bold, italic, color,
+    fill (hex or "none"), line (hex or "none"),
+    align (left/center/right), preset (roundRect, ellipse, etc.),
+    shadow, glow, reflection, softEdge (same format as PPTX),
+    x, y (col/row offset), width, height (col/row span)
+
   picture (image)  -- parent: /SheetName
     path (required), x, y (col/row offset, default 0),
     width, height (col/row span, default 5), alt
@@ -820,7 +860,7 @@ Types and properties:
     name (required), ref (e.g. Sheet1!$A$1:$D$10), scope (sheet name), comment
 
   chart  -- parent: /SheetName
-    chartType (column|bar|line|pie|doughnut|area|scatter|bubble|radar|stock)
+    chartType (column|bar|line|pie|doughnut|area|scatter|bubble|radar|stock|combo|column3d|bar3d)
     title, categories (comma-separated), legend (top|bottom|left|right|none)
     data ("Series1:1,2,3;Series2:4,5,6") or series1/series2/... ("Name:1,2,3")
     x, y (col/row offset), width, height (col/row span)
@@ -1153,9 +1193,25 @@ Shape properties (/slide[N]/shape[M]) -- applies to all runs:
   lighting   Light rig: threePt, balanced, soft, harsh, flood, contrasting, morning, sunrise, sunset, flat, glow, brightRoom (alias: lightRig)
   softEdge   Soft edge blur radius in points (e.g. "5") or "none"
 
+Text effects (auto-applied to text runs when fill=none):
+  shadow     "COLOR-BLUR-ANGLE-DIST-OPACITY" (e.g. "FFFFFF-6-135-4-60") or "none"
+  glow       "COLOR-RADIUS-OPACITY" (e.g. "FF0000-8-75") or "none"
+  reflection tight/half/full or "none"
+  softEdge   Radius in pt (e.g. "5") or "none"
+  Note: when shape has fill=none, these effects are applied to a:rPr (text runs)
+  instead of spPr (shape), so they render on the text itself.
+
 Chart properties (/slide[N]/chart[M]):
   title        Chart title text (or "none" to remove)
-  legend       Legend position: top/bottom/left/right or "none" to remove
+  title.font   Title font typeface
+  title.size   Title font size in pt
+  title.color  Title font color (hex)
+  title.bold   Title bold (true/false)
+  title.glow   Title glow: "COLOR-RADIUS-OPACITY"
+  title.shadow Title shadow: "COLOR-BLUR-ANGLE-DIST-OPACITY"
+  legend       Legend position: top/bottom/left/right or "none"
+  legendFont   Legend font: "size:color:fontname" (e.g. "9:8B949E:Helvetica Neue")
+  axisFont     Axis label font: "size:color:fontname"
   categories   Update category labels (comma-separated)
   data         Replace all series: "S1:1,2;S2:3,4"
   series1..N   Update individual series: "NewName:1,2,3" or just "1,2,3"
@@ -1170,16 +1226,23 @@ Chart properties (/slide[N]/chart[M]):
   axisNumFmt   Value axis number format (e.g. "0.0", "$#,##0")
   gridlines    Major gridlines: true/none or "color:widthPt:dash"
   minorGridlines  Minor gridlines: true/none or "color:widthPt:dash"
-  plotFill     Plot area background color (hex)
-  chartFill    Chart area background color (hex)
+  plotFill     Plot area fill: hex solid or gradient "C1-C2[:angle]"
+  chartFill    Chart area fill: hex solid or gradient "C1-C2[:angle]"
   lineWidth    Series line width in pt (e.g. "2.5")
   lineDash     Series line dash: solid, dot, dash, dashdot, longdash
   marker       Series marker: "style:size:color" (e.g. "circle:8:FF0000")
   markerSize   Marker size (2-72)
   style        Chart style ID (1-48)
+  opacity      Series fill opacity (0.0-1.0)
   transparency Series fill transparency (0-100, %)
-  gradient     Series gradient: "color1-color2:angle" (e.g. "FF0000-0000FF:90")
+  gradient     Series gradient: "C1-C2[:angle]" (all series)
   gradients    Per-series gradients (semicolon-separated)
+  series.shadow  Series bar shadow: "COLOR-BLUR-ANGLE-DIST-OPACITY" or "none"
+  series.outline Series bar outline: "COLOR-WIDTH" or "none"
+  gap          Bar gap width (0-500)
+  overlap      Bar overlap (-100 to 100)
+  view3d       3D camera: "rotX,rotY,perspective"
+  areafill     Area chart series fill: gradient "C1-C2[:angle]"
   secondary    Secondary axis: series indices (e.g. "2,3")
   x, y, width, height  Chart position and size (EMU or cm/in/pt/px)
   name         Chart name
@@ -1344,7 +1407,7 @@ Types and properties:
     x, y, width, height (EMU or cm/in/pt/px, default: full-width text box)
 
   chart  -- parent: /slide[N]
-    chartType (column|bar|line|pie|doughnut|area|scatter|bubble|radar|stock|combo), title, legend (top|bottom|left|right|none),
+    chartType (column|bar|line|pie|doughnut|area|scatter|bubble|radar|stock|combo|column3d|bar3d), title, legend (top|bottom|left|right|none),
     colors (comma-separated series colors, e.g. "FF0000,00FF00,0000FF"),
     comboSplit (for combo: how many series are columns, default 1),
     categories (comma-separated labels, e.g. "Q1,Q2,Q3,Q4"),

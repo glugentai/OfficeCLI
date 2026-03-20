@@ -84,6 +84,14 @@ public partial class PowerPointHandler
             children.Add(ConnectorToNode(cxn, slideNum, cxnIdx));
         }
 
+        var zoomElements = GetZoomElements(shapeTree);
+        int zmIdx = 0;
+        foreach (var zmEl in zoomElements)
+        {
+            zmIdx++;
+            children.Add(ZoomToNode(zmEl, slideNum, zmIdx));
+        }
+
         return children;
     }
 
@@ -444,14 +452,20 @@ public partial class PowerPointHandler
             if (lineAlpha.HasValue) node.Format["lineOpacity"] = $"{lineAlpha.Value / 100000.0:0.##}";
         }
 
-        // Effects (shadow, glow, reflection)
+        // Effects (shadow, glow, reflection) — check shape-level first, then text run-level
         var effectList = shape.ShapeProperties?.GetFirstChild<Drawing.EffectList>();
-        if (effectList != null)
+        // Fall back to first text run's effectLst (used for fill=none shapes)
+        var textEffectList = effectList == null || (!effectList.HasChildren)
+            ? shape.TextBody?.Descendants<Drawing.RunProperties>()
+                .Select(rp => rp.GetFirstChild<Drawing.EffectList>())
+                .FirstOrDefault(el => el != null)
+            : null;
+        var activeEffectList = effectList?.HasChildren == true ? effectList : textEffectList;
+        if (activeEffectList != null)
         {
-            var outerShadow = effectList.GetFirstChild<Drawing.OuterShadow>();
+            var outerShadow = activeEffectList.GetFirstChild<Drawing.OuterShadow>();
             if (outerShadow != null)
             {
-                // Read full params like POI XSLFShadow: color, blur(pt), angle(deg), dist(pt), opacity(%)
                 var shadowColor = ReadColorFromElement(outerShadow) ?? "000000";
                 var blurPt = outerShadow.BlurRadius?.HasValue == true ? $"{outerShadow.BlurRadius.Value / 12700.0:0.##}" : "4";
                 var angleDeg = outerShadow.Direction?.HasValue == true ? $"{outerShadow.Direction.Value / 60000.0:0.##}" : "45";
@@ -460,7 +474,7 @@ public partial class PowerPointHandler
                 var opacity = alphaEl?.Val?.HasValue == true ? $"{alphaEl.Val.Value / 1000.0:0.##}" : "40";
                 node.Format["shadow"] = $"{shadowColor}-{blurPt}-{angleDeg}-{distPt}-{opacity}";
             }
-            var glow = effectList.GetFirstChild<Drawing.Glow>();
+            var glow = activeEffectList.GetFirstChild<Drawing.Glow>();
             if (glow != null)
             {
                 var glowColor = ReadColorFromElement(glow) ?? "000000";
@@ -469,7 +483,7 @@ public partial class PowerPointHandler
                 var glowOpacity = glowAlpha?.Val?.HasValue == true ? $"{glowAlpha.Val.Value / 1000.0:0.##}" : "75";
                 node.Format["glow"] = $"{glowColor}-{radiusPt}-{glowOpacity}";
             }
-            var reflEl = effectList.GetFirstChild<Drawing.Reflection>();
+            var reflEl = activeEffectList.GetFirstChild<Drawing.Reflection>();
             if (reflEl != null)
             {
                 // Map endPosition back to type: tight=55000, half=90000, full=100000
@@ -478,7 +492,7 @@ public partial class PowerPointHandler
                 else if (endPos >= 70000) node.Format["reflection"] = "half";
                 else node.Format["reflection"] = "tight";
             }
-            var softEdge = effectList.GetFirstChild<Drawing.SoftEdge>();
+            var softEdge = activeEffectList.GetFirstChild<Drawing.SoftEdge>();
             if (softEdge?.Radius?.HasValue == true)
                 node.Format["softEdge"] = $"{softEdge.Radius.Value / 12700.0:0.##}";
         }

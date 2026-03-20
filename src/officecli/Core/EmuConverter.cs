@@ -71,6 +71,26 @@ public static class EmuConverter
     }
 
     /// <summary>
+    /// Parse line width value into EMU (int). Bare numbers are treated as points (pt),
+    /// matching Apache POI's setLineWidth() behavior. Suffixed values (cm/in/pt/px) are
+    /// parsed normally via ParseEmu.
+    /// </summary>
+    public static int ParseLineWidth(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException("Line width value cannot be null or empty.");
+
+        var trimmed = value.Trim();
+        // If bare integer/decimal with no unit suffix, treat as points
+        if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+            && !HasKnownUnitSuffix(trimmed, out _))
+        {
+            trimmed += "pt";
+        }
+        return ParseEmuAsInt(trimmed);
+    }
+
+    /// <summary>
     /// Format an EMU value as a human-readable string (e.g., "2.54cm").
     /// </summary>
     public static string FormatEmu(long emu)

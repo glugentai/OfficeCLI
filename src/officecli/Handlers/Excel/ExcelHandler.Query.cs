@@ -363,6 +363,14 @@ public partial class ExcelHandler
                 return GetPictureNode(sheetNameFromPath, worksheet, picIndex, path);
             }
 
+            // Handle shape[N] path segment
+            var shpMatch = Regex.Match(cellRef, @"^shape\[(\d+)\]$", RegexOptions.IgnoreCase);
+            if (shpMatch.Success)
+            {
+                var shpIndex = int.Parse(shpMatch.Groups[1].Value);
+                return GetShapeNode(sheetNameFromPath, worksheet, shpIndex, path);
+            }
+
             // If it looks like it could be a malformed cell reference (digits only, etc.), reject it
             if (Regex.IsMatch(cellRef, @"^\d+$"))
                 throw new ArgumentException($"Invalid cell reference: '{cellRef}'. Expected format like 'A1', 'B2'.");
