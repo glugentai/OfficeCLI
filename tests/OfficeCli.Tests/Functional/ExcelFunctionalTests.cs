@@ -630,6 +630,99 @@ public class ExcelFunctionalTests : IDisposable
         ((string)chart.Format["title"]).Should().Be("Updated Sales");
     }
 
+    // ==================== Chart Enhanced Properties ====================
+
+    [Fact]
+    public void Chart_TitleFont_Lifecycle()
+    {
+        _handler.Add("/Sheet1", "chart", null, new Dictionary<string, string>
+        {
+            ["chartType"] = "column",
+            ["categories"] = "A,B,C",
+            ["series1"] = "S1:1,2,3",
+            ["title"] = "My Chart"
+        });
+
+        _handler.Set("/Sheet1/chart[1]", new Dictionary<string, string>
+        {
+            ["title.font"] = "Impact",
+            ["title.size"] = "28",
+            ["title.color"] = "FF0000",
+            ["title.bold"] = "true"
+        });
+
+        // Title text should still be readable
+        var chart = _handler.Get("/Sheet1/chart[1]");
+        ((string)chart.Format["title"]).Should().Be("My Chart");
+    }
+
+    [Fact]
+    public void Chart_SeriesShadowOutline()
+    {
+        _handler.Add("/Sheet1", "chart", null, new Dictionary<string, string>
+        {
+            ["chartType"] = "column",
+            ["categories"] = "A,B",
+            ["series1"] = "S1:10,20",
+            ["colors"] = "FF0000"
+        });
+
+        _handler.Set("/Sheet1/chart[1]", new Dictionary<string, string>
+        {
+            ["series.shadow"] = "000000-8-135-4-50",
+            ["series.outline"] = "FFFFFF-0.5"
+        });
+
+        // Should not throw, chart still readable
+        var chart = _handler.Get("/Sheet1/chart[1]");
+        chart.Type.Should().Be("chart");
+    }
+
+    [Fact]
+    public void Chart_GradientFill_And_View3d()
+    {
+        _handler.Add("/Sheet1", "chart", null, new Dictionary<string, string>
+        {
+            ["chartType"] = "column",
+            ["categories"] = "Q1,Q2",
+            ["series1"] = "Rev:100,200"
+        });
+
+        _handler.Set("/Sheet1/chart[1]", new Dictionary<string, string>
+        {
+            ["chartfill"] = "0D1117-161B22:270",
+            ["plotfill"] = "161B22",
+            ["gradient"] = "FF0000-0000FF:90",
+            ["gap"] = "80",
+            ["axisfont"] = "9:8B949E",
+            ["legendfont"] = "9:CCCCCC"
+        });
+
+        var chart = _handler.Get("/Sheet1/chart[1]");
+        chart.Type.Should().Be("chart");
+    }
+
+    [Fact]
+    public void Chart_Column3d()
+    {
+        _handler.Add("/Sheet1", "chart", null, new Dictionary<string, string>
+        {
+            ["chartType"] = "column3d",
+            ["categories"] = "A,B,C",
+            ["series1"] = "S1:1,2,3",
+            ["title"] = "3D Chart"
+        });
+
+        _handler.Set("/Sheet1/chart[1]", new Dictionary<string, string>
+        {
+            ["view3d"] = "15,20,30"
+        });
+
+        var chart = _handler.Get("/Sheet1/chart[1]");
+        chart.Type.Should().Be("chart");
+        ((string)chart.Format["title"]).Should().Be("3D Chart");
+    }
+
     // ==================== Excel Shape Lifecycle ====================
 
     [Fact]

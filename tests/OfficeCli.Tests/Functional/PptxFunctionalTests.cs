@@ -1103,6 +1103,139 @@ public class PptxFunctionalTests : IDisposable
         node.Text.Should().Be("persist anim");
     }
 
+    // ==================== Animation Effect Types ====================
+
+    [Fact]
+    public void Animation_Fly_UsesPropertyAnim()
+    {
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "fly test",
+            ["animation"] = "fly-entrance-500"
+        });
+
+        // Verify shape is accessible and animation readback works
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Text.Should().Be("fly test");
+        node.Format.Should().ContainKey("animation");
+        node.Format["animation"]!.ToString()!.Should().Contain("fly");
+
+        // Verify via raw XML: should have p:anim (not p:animEffect filter="fly")
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var xml = slidePart.Slide.OuterXml;
+        xml.Should().Contain("ppt_"); // p:anim uses ppt_x or ppt_y
+        xml.Should().NotContain("filter=\"fly\""); // should NOT use invalid filter
+    }
+
+    [Fact]
+    public void Animation_Zoom_UsesAnimScale()
+    {
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "zoom test",
+            ["animation"] = "zoom-entrance-600"
+        });
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("animation");
+        node.Format["animation"]!.ToString()!.Should().Contain("zoom");
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var xml = slidePart.Slide.OuterXml;
+        xml.Should().Contain("animScale"); // p:animScale for zoom
+        xml.Should().NotContain("filter=\"zoom\"");
+    }
+
+    [Fact]
+    public void Animation_Swivel_UsesAnimRot()
+    {
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+        {
+            ["text"] = "swivel test",
+            ["animation"] = "swivel-entrance-700"
+        });
+
+        var node = _handler.Get("/slide[1]/shape[1]");
+        node.Format.Should().ContainKey("animation");
+        node.Format["animation"]!.ToString()!.Should().Contain("swivel");
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.First();
+        var xml = slidePart.Slide.OuterXml;
+        xml.Should().Contain("animRot"); // p:animRot for swivel
+        xml.Should().NotContain("filter=\"swivel\"");
+    }
+
+    // ==================== Morph + AdvanceTime ====================
+
+    [Fact]
+    public void Morph_WithAdvanceTime_NoSchemaDuplicate()
+    {
+        // Morph transition + advanceTime should produce a single transition inside mc:AlternateContent
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/", "slide", null, new Dictionary<string, string>
+        {
+            ["transition"] = "morph",
+            ["advanceTime"] = "2000",
+            ["advanceClick"] = "false"
+        });
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.Skip(1).First();
+        var slide = slidePart.Slide;
+
+        // Should have AlternateContent with morph
+        slide.OuterXml.Should().Contain("morph");
+
+        // Should NOT have a standalone p:transition outside AlternateContent
+        var typedTransitions = slide.Elements<DocumentFormat.OpenXml.Presentation.Transition>().Count();
+        typedTransitions.Should().Be(0, "advanceTime should be merged into morph AlternateContent, not a separate p:transition");
+
+        // advTm should be inside the AlternateContent transitions
+        var acXml = slide.ChildElements.First(c => c.LocalName == "AlternateContent").OuterXml;
+        acXml.Should().Contain("advTm=\"2000\"");
+        acXml.Should().Contain("advClick=\"0\"");
+    }
+
+    [Fact]
+    public void Morph_SetAdvanceTime_AfterCreation()
+    {
+        _handler.Add("/", "slide", null, new Dictionary<string, string>());
+        _handler.Add("/", "slide", null, new Dictionary<string, string> { ["transition"] = "morph" });
+
+        // Set advanceTime after slide creation
+        _handler.Set("/slide[2]", new Dictionary<string, string>
+        {
+            ["advanceTime"] = "1500",
+            ["advanceClick"] = "false"
+        });
+
+        var doc = _handler.GetType()
+            .GetField("_doc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(_handler) as DocumentFormat.OpenXml.Packaging.PresentationDocument;
+        var slidePart = doc!.PresentationPart!.SlideParts.Skip(1).First();
+        var slide = slidePart.Slide;
+
+        var typedTransitions = slide.Elements<DocumentFormat.OpenXml.Presentation.Transition>().Count();
+        typedTransitions.Should().Be(0, "should not have duplicate typed p:transition");
+
+        var acXml = slide.ChildElements.First(c => c.LocalName == "AlternateContent").OuterXml;
+        acXml.Should().Contain("advTm=\"1500\"");
+    }
+
     // ==================== Radial Gradient ====================
 
     [Fact]
