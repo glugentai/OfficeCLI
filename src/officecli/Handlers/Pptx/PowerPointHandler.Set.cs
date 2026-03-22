@@ -508,14 +508,46 @@ public partial class PowerPointHandler
                         row.Height = ParseEmu(value);
                         break;
                     default:
-                        // Apply to all cells in this row
-                        var cellUnsup = new HashSet<string>();
-                        foreach (var cell in row.Elements<Drawing.TableCell>())
+                        // c1, c2, ... shorthand: set text of specific cell by index
+                        if (key.Length >= 2 && key[0] == 'c' && int.TryParse(key.AsSpan(1), out var cIdx))
                         {
-                            var u = SetTableCellProperties(cell, new Dictionary<string, string> { { key, value } });
-                            foreach (var k in u) cellUnsup.Add(k);
+                            var rowCells = row.Elements<Drawing.TableCell>().ToList();
+                            if (cIdx < 1 || cIdx > rowCells.Count)
+                                throw new ArgumentException($"Cell c{cIdx} out of range (row has {rowCells.Count} cells)");
+                            var targetCell = rowCells[cIdx - 1];
+                            // Replace text in first paragraph's first run, or create one
+                            var txBody = targetCell.TextBody;
+                            if (txBody == null)
+                            {
+                                txBody = new Drawing.TextBody(
+                                    new Drawing.BodyProperties(),
+                                    new Drawing.ListStyle(),
+                                    new Drawing.Paragraph());
+                                targetCell.AppendChild(txBody);
+                            }
+                            var para = txBody.Elements<Drawing.Paragraph>().FirstOrDefault()
+                                ?? txBody.AppendChild(new Drawing.Paragraph());
+                            para.RemoveAllChildren<Drawing.Run>();
+                            para.RemoveAllChildren<Drawing.Break>();
+                            if (!string.IsNullOrEmpty(value))
+                            {
+                                var newRun = new Drawing.Run(
+                                    new Drawing.RunProperties { Language = "en-US" },
+                                    new Drawing.Text(value));
+                                para.AppendChild(newRun);
+                            }
                         }
-                        unsupported.AddRange(cellUnsup);
+                        else
+                        {
+                            // Apply to all cells in this row
+                            var cellUnsup = new HashSet<string>();
+                            foreach (var cell in row.Elements<Drawing.TableCell>())
+                            {
+                                var u = SetTableCellProperties(cell, new Dictionary<string, string> { { key, value } });
+                                foreach (var k in u) cellUnsup.Add(k);
+                            }
+                            unsupported.AddRange(cellUnsup);
+                        }
                         break;
                 }
             }

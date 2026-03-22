@@ -1343,9 +1343,21 @@ public partial class WordHandler
                             trPr.RemoveAllChildren<TableHeader>();
                         break;
                     default:
-                        if (!GenericXmlQuery.TryCreateTypedChild(trPr, key, value))
+                        // c1, c2, ... shorthand: set text of specific cell by index
+                        if (key.Length >= 2 && key[0] == 'c' && int.TryParse(key.AsSpan(1), out var cIdx))
+                        {
+                            var rowCells = row.Elements<TableCell>().ToList();
+                            if (cIdx < 1 || cIdx > rowCells.Count)
+                                throw new ArgumentException($"Cell c{cIdx} out of range (row has {rowCells.Count} cells)");
+                            var targetPara = rowCells[cIdx - 1].GetFirstChild<Paragraph>()
+                                ?? rowCells[cIdx - 1].AppendChild(new Paragraph());
+                            targetPara.RemoveAllChildren<Run>();
+                            if (!string.IsNullOrEmpty(value))
+                                targetPara.AppendChild(new Run(new Text(value) { Space = SpaceProcessingModeValues.Preserve }));
+                        }
+                        else if (!GenericXmlQuery.TryCreateTypedChild(trPr, key, value))
                             unsupported.Add(unsupported.Count == 0
-                                ? $"{key} (valid row props: height, height.exact, header)"
+                                ? $"{key} (valid row props: height, height.exact, header, c1, c2, ...)"
                                 : key);
                         break;
                 }
