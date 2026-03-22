@@ -1096,9 +1096,40 @@ public partial class PowerPointHandler
                 dashAttr = $" stroke-dasharray=\"{dashArray}\"";
         }
 
+        // Arrow markers
+        var headEnd = outline?.GetFirstChild<Drawing.HeadEnd>();
+        var tailEnd = outline?.GetFirstChild<Drawing.TailEnd>();
+        var hasHead = headEnd?.Type?.HasValue == true && headEnd.Type.InnerText != "none";
+        var hasTail = tailEnd?.Type?.HasValue == true && tailEnd.Type.InnerText != "none";
+        var markerDefs = "";
+        var markerStartAttr = "";
+        var markerEndAttr = "";
+        var safeColor = CssSanitizeColor(lineColor);
+
+        if (hasHead || hasTail)
+        {
+            var arrowSize = Math.Max(3, lineWidth * 3);
+            var defs = new StringBuilder();
+            defs.Append("<defs>");
+            if (hasHead)
+            {
+                defs.Append($"<marker id=\"ah\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"{arrowSize:0.#}\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto-start-reverse\"><polygon points=\"{arrowSize:0.#} 0,0 {arrowSize / 2:0.#},{arrowSize:0.#} {arrowSize:0.#}\" fill=\"{safeColor}\"/></marker>");
+                markerStartAttr = " marker-start=\"url(#ah)\"";
+            }
+            if (hasTail)
+            {
+                defs.Append($"<marker id=\"at\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"0\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto\"><polygon points=\"0 0,{arrowSize:0.#} {arrowSize / 2:0.#},0 {arrowSize:0.#}\" fill=\"{safeColor}\"/></marker>");
+                markerEndAttr = " marker-end=\"url(#at)\"";
+            }
+            defs.Append("</defs>");
+            markerDefs = defs.ToString();
+        }
+
         sb.AppendLine($"    <div class=\"connector\" style=\"left:{EmuToCm(renderX)}cm;top:{EmuToCm(renderY)}cm;width:{widthCm}cm;height:{heightCm}cm\">");
         sb.AppendLine($"      <svg width=\"100%\" height=\"100%\" preserveAspectRatio=\"none\">");
-        sb.AppendLine($"        <line x1=\"{svgX1}\" y1=\"{svgY1}\" x2=\"{svgX2}\" y2=\"{svgY2}\" stroke=\"{CssSanitizeColor(lineColor)}\" stroke-width=\"{lineWidth:0.##}\"{dashAttr}/>");
+        if (!string.IsNullOrEmpty(markerDefs))
+            sb.AppendLine($"        {markerDefs}");
+        sb.AppendLine($"        <line x1=\"{svgX1}\" y1=\"{svgY1}\" x2=\"{svgX2}\" y2=\"{svgY2}\" stroke=\"{safeColor}\" stroke-width=\"{lineWidth:0.##}\"{dashAttr}{markerStartAttr}{markerEndAttr}/>");
         sb.AppendLine("      </svg>");
         sb.AppendLine("    </div>");
     }
