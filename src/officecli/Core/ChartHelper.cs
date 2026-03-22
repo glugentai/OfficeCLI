@@ -38,7 +38,11 @@ internal static class ChartHelper
             "bubble" => "bubble",
             "radar" or "spider" => "radar",
             "stock" or "ohlc" => "stock",
-            _ => ct
+            "combo" => "combo",
+            _ => throw new ArgumentException(
+                $"Unknown chart type: '{chartType}'. Supported types: " +
+                "column, bar, line, pie, doughnut, area, scatter, bubble, radar, stock, combo. " +
+                "Modifiers: 3d (e.g. column3d), stacked (e.g. stackedColumn), percentStacked (e.g. percentStackedBar).")
         };
 
         return (kind, is3D, stacked, percentStacked);
