@@ -333,6 +333,26 @@ public class WatchFunctionalTests : IDisposable
         receivedMessage.Should().StartWith("refresh");
     }
 
+    // ==================== Idle timeout ====================
+
+    [Fact]
+    public async Task WatchServer_ShutsDownAfterIdleTimeout()
+    {
+        _handler.Add("/", "slide", null, new());
+        _handler.Dispose();
+
+        var port = GetFreePort();
+        using var watch = new WatchServer(_path, port, idleTimeout: TimeSpan.FromSeconds(2));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        // RunAsync should return on its own when idle timeout fires (no clients, no messages)
+        await watch.RunAsync(cts.Token);
+
+        cts.IsCancellationRequested.Should().BeFalse("server should have shut down on idle, not via external cancel");
+
+        _handler = new PowerPointHandler(_path, editable: true);
+    }
+
     // ==================== SSE endpoint ====================
 
     [Fact]
