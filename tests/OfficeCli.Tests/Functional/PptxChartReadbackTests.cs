@@ -475,9 +475,9 @@ public class PptxChartReadbackTests : IDisposable
         {
             ["rows"] = "2", ["cols"] = "2"
         });
-        _pptx.Set("/slide[1]/table[1]/row[1]/cell[1]", new() { ["align"] = "right" });
+        _pptx.Set("/slide[1]/table[1]/tr[1]/tc[1]", new() { ["align"] = "right" });
 
-        var cell = _pptx.Get("/slide[1]/table[1]/row[1]/cell[1]");
+        var cell = _pptx.Get("/slide[1]/table[1]/tr[1]/tc[1]");
         cell.Format.Should().ContainKey("align");
         ((string)cell.Format["align"]).Should().Be("right",
             "table cell alignment should normalize 'r' to 'right'");
