@@ -1973,17 +1973,17 @@ public class PptxFunctionalTests : IDisposable
 
         // 2. Get + Verify
         var root = _handler.Get("/");
-        ((string)root.Format["slideSize"]).Should().Be("screen4x3");
+        ((string)root.Format["slideSize"]).Should().Be("standard");
 
         // 3. Set to 16:9
         _handler.Set("/", new() { ["slidesize"] = "16:9" });
         root = _handler.Get("/");
-        ((string)root.Format["slideSize"]).Should().Be("screen16x9");
+        ((string)root.Format["slideSize"]).Should().Be("widescreen");
 
         // 4. Persist + Verify
         Reopen();
         root = _handler.Get("/");
-        ((string)root.Format["slideSize"]).Should().Be("screen16x9");
+        ((string)root.Format["slideSize"]).Should().Be("widescreen");
     }
 
     [Fact]
