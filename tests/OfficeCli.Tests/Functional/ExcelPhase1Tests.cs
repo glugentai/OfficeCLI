@@ -546,4 +546,177 @@ public class ExcelPhase1Tests : IDisposable
         var node = _handler.Get("/Sheet1/cf[1]", 0);
         node.Format["cfType"].Should().Be("containsText");
     }
+
+    // ==================== Rich Text — Extended Coverage ====================
+
+    [Fact]
+    public void Remove_SingleRun_FromRichTextCell()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "First", ["bold"] = "true" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "Second", ["italic"] = "true" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "Third", ["strike"] = "true" });
+
+        // Verify 3 runs exist
+        var before = _handler.Get("/Sheet1/A1", 1);
+        before.Children.Should().HaveCount(3);
+
+        // Remove the middle run
+        _handler.Remove("/Sheet1/A1/run[2]");
+
+        var after = _handler.Get("/Sheet1/A1", 1);
+        after.Children.Should().HaveCount(2);
+        after.Children[0].Text.Should().Be("First");
+        after.Children[0].Format["bold"].Should().Be(true);
+        after.Children[1].Text.Should().Be("Third");
+        after.Children[1].Format["strike"].Should().Be(true);
+    }
+
+    [Fact]
+    public void Remove_LastRun_ConvertsToPlainText()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "RunA", ["bold"] = "true" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "RunB", ["italic"] = "true" });
+
+        // Remove both runs
+        _handler.Remove("/Sheet1/A1/run[2]");
+        _handler.Remove("/Sheet1/A1/run[1]");
+
+        // Cell should still be accessible (empty or plain text)
+        var node = _handler.Get("/Sheet1/A1", 0);
+        node.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Add_Run_WithSubscript()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "H" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "2", ["subscript"] = "true" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "O" });
+
+        var node = _handler.Get("/Sheet1/A1", 1);
+        node.Children.Should().HaveCount(3);
+        node.Children[0].Text.Should().Be("H");
+        node.Children[1].Text.Should().Be("2");
+        node.Children[1].Format["subscript"].Should().Be(true);
+        node.Children[2].Text.Should().Be("O");
+    }
+
+    [Fact]
+    public void Set_RunText_UpdatesContent()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "Original", ["bold"] = "true" });
+
+        // Modify the text via Set
+        _handler.Set("/Sheet1/A1/run[1]", new() { ["text"] = "Updated" });
+
+        var node = _handler.Get("/Sheet1/A1", 1);
+        node.Children[0].Text.Should().Be("Updated");
+        // Bold should still be intact
+        node.Children[0].Format["bold"].Should().Be(true);
+    }
+
+    [Fact]
+    public void Add_Run_WithUnderlineDouble_PersistsAfterReopen()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "Important", ["underline"] = "double" });
+
+        Reopen();
+
+        var node = _handler.Get("/Sheet1/A1", 1);
+        node.Children.Should().HaveCountGreaterOrEqualTo(1);
+        node.Children[0].Text.Should().Be("Important");
+        node.Children[0].Format["underline"].Should().Be("double");
+    }
+
+    [Fact]
+    public void Add_Run_MixedFormatting_BoldItalicColor()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+        _handler.Add("/Sheet1/A1", "run", null, new()
+        {
+            ["text"] = "Styled",
+            ["bold"] = "true",
+            ["italic"] = "true",
+            ["color"] = "FF0000"
+        });
+
+        var node = _handler.Get("/Sheet1/A1", 1);
+        node.Children.Should().HaveCount(1);
+        node.Children[0].Text.Should().Be("Styled");
+        node.Children[0].Format["bold"].Should().Be(true);
+        node.Children[0].Format["italic"].Should().Be(true);
+        node.Children[0].Format["color"].Should().Be("#FF0000");
+    }
+
+    [Fact]
+    public void Color_RoundTrip_VariousFormats()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+
+        // Test with # prefix
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "A", ["color"] = "#FF0000" });
+        var node = _handler.Get("/Sheet1/A1", 1);
+        node.Children[0].Format["color"].Should().Be("#FF0000");
+
+        // Test without # prefix on a new cell
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "B1", ["value"] = "" });
+        _handler.Add("/Sheet1/B1", "run", null, new() { ["text"] = "B", ["color"] = "00FF00" });
+        node = _handler.Get("/Sheet1/B1", 1);
+        node.Children[0].Format["color"].Should().Be("#00FF00");
+
+        // Test named color on a new cell
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "C1", ["value"] = "" });
+        _handler.Add("/Sheet1/C1", "run", null, new() { ["text"] = "C", ["color"] = "red" });
+        node = _handler.Get("/Sheet1/C1", 1);
+        node.Children[0].Format["color"].Should().Be("#FF0000");
+    }
+
+    [Fact]
+    public void FontSize_RoundTrip()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+
+        // Test bare number
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "Big", ["size"] = "14" });
+        var node = _handler.Get("/Sheet1/A1", 1);
+        node.Children[0].Format["size"].Should().Be("14pt");
+
+        // Test with pt suffix on a new cell
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "B1", ["value"] = "" });
+        _handler.Add("/Sheet1/B1", "run", null, new() { ["text"] = "Small", ["size"] = "10pt" });
+        node = _handler.Get("/Sheet1/B1", 1);
+        node.Children[0].Format["size"].Should().Be("10pt");
+    }
+
+    [Fact]
+    public void Set_Superscript_RemovesSubscript()
+    {
+        _handler.Add("/", "sheet", null, new() { ["name"] = "Sheet1" });
+        _handler.Add("/Sheet1", "cell", null, new() { ["ref"] = "A1", ["value"] = "" });
+        _handler.Add("/Sheet1/A1", "run", null, new() { ["text"] = "x", ["subscript"] = "true" });
+
+        // Verify subscript is set
+        var node = _handler.Get("/Sheet1/A1", 1);
+        node.Children[0].Format["subscript"].Should().Be(true);
+
+        // Set superscript — should remove subscript (mutual exclusion via VerticalTextAlignment)
+        _handler.Set("/Sheet1/A1/run[1]", new() { ["superscript"] = "true" });
+
+        node = _handler.Get("/Sheet1/A1", 1);
+        node.Children[0].Format["superscript"].Should().Be(true);
+        node.Children[0].Format.Should().NotContainKey("subscript");
+    }
 }
