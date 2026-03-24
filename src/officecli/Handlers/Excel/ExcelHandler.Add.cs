@@ -264,7 +264,15 @@ public partial class ExcelHandler
                     if (hyperlinksEl == null)
                     {
                         hyperlinksEl = new Hyperlinks();
-                        ws.AppendChild(hyperlinksEl);
+                        // Insert in correct OOXML schema position: after conditionalFormatting, before printOptions/pageMargins/pageSetup/drawing etc.
+                        var insertBefore = ws.GetFirstChild<PrintOptions>()
+                            ?? ws.GetFirstChild<PageMargins>() as OpenXmlElement
+                            ?? ws.GetFirstChild<PageSetup>()
+                            ?? ws.GetFirstChild<Drawing>();
+                        if (insertBefore != null)
+                            ws.InsertBefore(hyperlinksEl, insertBefore);
+                        else
+                            ws.AppendChild(hyperlinksEl);
                     }
                     hyperlinksEl.AppendChild(new Hyperlink { Reference = cellRef.ToUpperInvariant(), Id = hlRel.Id });
                 }
@@ -1766,6 +1774,53 @@ public partial class ExcelHandler
                     }
                     default:
                         throw new ArgumentException($"Unsupported CF type: {typeLower}");
+                }
+
+                // Build DXF formatting if fill/font properties are provided
+                var cfNewDxf = new DifferentialFormat();
+                bool cfNewHasDxf = false;
+                if (properties.TryGetValue("font.color", out var cfNewFontColor))
+                {
+                    var normalizedFontColor = ParseHelpers.NormalizeArgbColor(cfNewFontColor);
+                    cfNewDxf.Append(new Font(new DocumentFormat.OpenXml.Spreadsheet.Color { Rgb = normalizedFontColor }));
+                    cfNewHasDxf = true;
+                }
+                else if (properties.TryGetValue("font.bold", out var cfNewFontBold) && IsTruthy(cfNewFontBold))
+                {
+                    cfNewDxf.Append(new Font(new Bold()));
+                    cfNewHasDxf = true;
+                }
+                if (properties.TryGetValue("fill", out var cfNewFillColor))
+                {
+                    var normalizedFillColor = ParseHelpers.NormalizeArgbColor(cfNewFillColor);
+                    cfNewDxf.Append(new Fill(new PatternFill(
+                        new BackgroundColor { Rgb = normalizedFillColor })
+                    { PatternType = PatternValues.Solid }));
+                    cfNewHasDxf = true;
+                }
+                if (properties.TryGetValue("font.color", out _) && properties.TryGetValue("font.bold", out var cfNewFb2) && IsTruthy(cfNewFb2))
+                {
+                    var existingFont = cfNewDxf.GetFirstChild<Font>();
+                    existingFont?.Append(new Bold());
+                }
+
+                if (cfNewHasDxf)
+                {
+                    var cfNewWbPart = _doc.WorkbookPart
+                        ?? throw new InvalidOperationException("Workbook not found");
+                    var cfNewStyleMgr = new ExcelStyleManager(cfNewWbPart);
+                    cfNewStyleMgr.EnsureStylesPart();
+                    var cfNewStylesheet = cfNewWbPart.WorkbookStylesPart!.Stylesheet!;
+                    var cfNewDxfs = cfNewStylesheet.GetFirstChild<DifferentialFormats>();
+                    if (cfNewDxfs == null)
+                    {
+                        cfNewDxfs = new DifferentialFormats { Count = 0 };
+                        cfNewStylesheet.Append(cfNewDxfs);
+                    }
+                    cfNewDxfs.Append(cfNewDxf);
+                    cfNewDxfs.Count = (uint)cfNewDxfs.Elements<DifferentialFormat>().Count();
+                    cfNewStylesheet.Save();
+                    cfNewRule.FormatId = cfNewDxfs.Count!.Value - 1;
                 }
 
                 var cfNewFormatting = new ConditionalFormatting(cfNewRule)

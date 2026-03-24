@@ -672,7 +672,9 @@ public partial class PowerPointHandler
                         var externalRel = sourcePart.ExternalRelationships.FirstOrDefault(r => r.Id == oldRelId);
                         if (externalRel != null)
                         {
-                            var newERelId = targetPart.AddExternalRelationship(externalRel.RelationshipType, externalRel.Uri).Id;
+                            var existing = targetPart.ExternalRelationships
+                                .FirstOrDefault(r => r.Uri == externalRel.Uri && r.RelationshipType == externalRel.RelationshipType);
+                            var newERelId = existing?.Id ?? targetPart.AddExternalRelationship(externalRel.RelationshipType, externalRel.Uri).Id;
                             if (newERelId != oldRelId)
                             {
                                 el.SetAttribute(new OpenXmlAttribute(attr.Prefix, attr.LocalName, attr.NamespaceUri, newERelId));

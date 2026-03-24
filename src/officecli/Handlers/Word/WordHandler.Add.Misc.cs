@@ -177,7 +177,9 @@ public partial class WordHandler
             "subject" => " SUBJECT ",
             "filename" => " FILENAME ",
             "time" => " TIME ",
-            _ => properties.GetValueOrDefault("instruction", " PAGE ")
+            _ => properties.ContainsKey("instruction")
+                ? properties["instruction"]
+                : throw new ArgumentException($"Unknown field type '{effectiveType}'. Provide a known type or an 'instruction' property.")
         };
         // Allow override via property
         if (properties.TryGetValue("instruction", out var instr))

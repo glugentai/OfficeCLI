@@ -1444,9 +1444,11 @@ public partial class PowerPointHandler
     /// </summary>
     private static bool IsDefaultP14Direction(string typeName, string dir) => typeName switch
     {
-        "vortex" or "glitter" or "pan" => dir is "l",
-        "switch" or "flip" => dir is "l",
+        "vortex" or "glitter" or "pan" or "prism" => dir is "l",
+        "switch" or "flip" or "ferris" or "gallery" or "conveyor" or "reveal" => dir is "l",
         "doors" or "window" => dir is "horz",
+        "warp" or "flythrough" or "shred" => dir is "in",
+        "ripple" => dir is "center",
         _ => false
     };
 
