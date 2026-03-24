@@ -13,6 +13,8 @@ OfficeCLI 是一个免费、开源的命令行工具，专为 AI 智能体设计
 
 > 为智能体而生，人类亦可用。
 
+![OfficeCLI 产品展示](assets/hero-zh.png)
+
 ## AI 智能体接入
 
 OfficeCLI 附带 [SKILL.md](SKILL.md)，用于指导 AI 智能体高效使用本工具。
@@ -322,6 +324,10 @@ OfficeCLI 与其他 AI 智能体处理 Office 文档的方案相比如何？
 ## 许可证
 
 [Apache License 2.0](LICENSE)
+
+## 友情链接
+
+[LINUX DO - 新的理想型社区](https://linux.do/)
 
 ---
 
