@@ -235,6 +235,8 @@ public partial class WordHandler
                 if (rPr.Italic != null) styleNode.Format["italic"] = true;
                 if (rPr.Color?.Val?.Value != null) styleNode.Format["color"] = ParseHelpers.FormatHexColor(rPr.Color.Val.Value);
                 else if (rPr.Color?.ThemeColor?.HasValue == true) styleNode.Format["color"] = rPr.Color.ThemeColor.InnerText;
+                if (rPr.Underline?.Val != null) styleNode.Format["underline"] = rPr.Underline.Val.InnerText;
+                if (rPr.Strike != null) styleNode.Format["strike"] = true;
             }
 
             // Read paragraph properties

@@ -175,10 +175,10 @@ public partial class WordHandler
             IEnumerable<OpenXmlElement> children;
             if (current is Body body2 && (seg.Name.ToLowerInvariant() == "p" || seg.Name.ToLowerInvariant() == "tbl"))
             {
-                // Flatten sdt containers when navigating body-level paragraphs/tables
+                // Only count direct body-level paragraphs/tables, skip those inside SdtBlock containers
                 children = seg.Name.ToLowerInvariant() == "p"
-                    ? GetBodyElements(body2).OfType<Paragraph>().Cast<OpenXmlElement>()
-                    : GetBodyElements(body2).OfType<Table>().Cast<OpenXmlElement>();
+                    ? body2.Elements<Paragraph>().Cast<OpenXmlElement>()
+                    : body2.Elements<Table>().Cast<OpenXmlElement>();
             }
             else if (current is Body body3 && seg.Name == "oMathPara")
             {
@@ -480,6 +480,22 @@ public partial class WordHandler
                     if (rel != null) node.Format["link"] = rel.Uri.ToString();
                 }
                 catch { }
+            }
+            // Read run formatting from the first run inside the hyperlink
+            var hlRun = hyperlink.Elements<Run>().FirstOrDefault(r => r.GetFirstChild<Text>() != null);
+            if (hlRun?.RunProperties != null)
+            {
+                var rp = hlRun.RunProperties;
+                if (rp.RunFonts?.Ascii?.Value != null) node.Format["font"] = rp.RunFonts.Ascii.Value;
+                if (rp.FontSize?.Val?.Value != null)
+                    node.Format["size"] = $"{int.Parse(rp.FontSize.Val.Value) / 2.0:0.##}pt";
+                if (rp.Bold != null) node.Format["bold"] = true;
+                if (rp.Italic != null) node.Format["italic"] = true;
+                if (rp.Color?.Val?.Value != null) node.Format["color"] = ParseHelpers.FormatHexColor(rp.Color.Val.Value);
+                else if (rp.Color?.ThemeColor?.HasValue == true) node.Format["color"] = rp.Color.ThemeColor.InnerText;
+                if (rp.Underline?.Val != null) node.Format["underline"] = rp.Underline.Val.InnerText;
+                if (rp.Strike != null) node.Format["strike"] = true;
+                if (rp.Highlight?.Val != null) node.Format["highlight"] = rp.Highlight.Val.InnerText;
             }
         }
         else if (element is Table table)

@@ -64,7 +64,10 @@ public partial class WordHandler
             commentPara.AppendChild(refRun);
         }
 
-        var resultPath = $"{parentPath}/comment[{commentId}]";
+        // Return navigable path using /comments/comment[N] (sequential index)
+        var commentIndex = commentsPart.Comments.Elements<Comment>().ToList()
+            .FindIndex(c => c.Id?.Value == commentId) + 1;
+        var resultPath = $"/comments/comment[{commentIndex}]";
         return resultPath;
     }
 
