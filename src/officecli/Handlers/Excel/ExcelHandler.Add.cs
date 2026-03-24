@@ -8,6 +8,7 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeCli.Core;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 using Drawing = DocumentFormat.OpenXml.Drawing;
+using SpreadsheetDrawing = DocumentFormat.OpenXml.Spreadsheet.Drawing;
 using XDR = DocumentFormat.OpenXml.Drawing.Spreadsheet;
 
 namespace OfficeCli.Handlers;
@@ -268,7 +269,7 @@ public partial class ExcelHandler
                         OpenXmlElement? insertBefore = ws.GetFirstChild<PrintOptions>();
                         insertBefore ??= ws.GetFirstChild<PageMargins>();
                         insertBefore ??= ws.GetFirstChild<PageSetup>();
-                        insertBefore ??= ws.Elements().FirstOrDefault(e => e.LocalName == "drawing");
+                        insertBefore ??= ws.GetFirstChild<SpreadsheetDrawing>();
                         if (insertBefore != null)
                             ws.InsertBefore(hyperlinksEl, insertBefore);
                         else
