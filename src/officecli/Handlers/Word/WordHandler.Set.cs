@@ -530,16 +530,16 @@ public partial class WordHandler
                         rPrS.Strike = IsTruthy(value) ? new Strike() : null;
                         break;
                     case "alignment":
-                        var pPr = style.StyleParagraphProperties ?? style.AppendChild(new StyleParagraphProperties());
+                        var pPr = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
                         pPr.Justification = new Justification { Val = ParseJustification(value) };
                         break;
                     case "spacebefore" or "spaceBefore":
-                        var pPr2 = style.StyleParagraphProperties ?? style.AppendChild(new StyleParagraphProperties());
+                        var pPr2 = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
                         var sp2 = pPr2.SpacingBetweenLines ?? (pPr2.SpacingBetweenLines = new SpacingBetweenLines());
                         sp2.Before = SpacingConverter.ParseWordSpacing(value).ToString();
                         break;
                     case "spaceafter" or "spaceAfter":
-                        var pPr3 = style.StyleParagraphProperties ?? style.AppendChild(new StyleParagraphProperties());
+                        var pPr3 = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
                         var sp3 = pPr3.SpacingBetweenLines ?? (pPr3.SpacingBetweenLines = new SpacingBetweenLines());
                         sp3.After = SpacingConverter.ParseWordSpacing(value).ToString();
                         break;
@@ -1514,6 +1514,18 @@ public partial class WordHandler
     //         thinThickSmallGap, thickThinSmallGap, thinThickThinSmallGap,
     //         thinThickMediumGap, thickThinMediumGap, thinThickThinMediumGap,
     //         thinThickLargeGap, thickThinLargeGap, thinThickThinLargeGap, wave, doubleWave, threeDEmboss, threeDEngrave
+    /// <summary>Insert StyleParagraphProperties before StyleRunProperties to maintain OOXML schema order.</summary>
+    private static StyleParagraphProperties EnsureStyleParagraphProperties(Style style)
+    {
+        var pPr = new StyleParagraphProperties();
+        var rPr = style.StyleRunProperties;
+        if (rPr != null)
+            style.InsertBefore(pPr, rPr);
+        else
+            style.AppendChild(pPr);
+        return pPr;
+    }
+
     private static BorderValues ParseBorderStyle(string style) => style.ToLowerInvariant() switch
     {
         "none" => BorderValues.None,
