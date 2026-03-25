@@ -150,7 +150,7 @@ public partial class WordHandler
                 var ulVal = pUnderline.ToLowerInvariant() switch { "true" => "single", "false" or "none" => "none", _ => pUnderline };
                 rProps.Underline = new Underline { Val = new UnderlineValues(ulVal) };
             }
-            if (properties.TryGetValue("strike", out var pStrike) && IsTruthy(pStrike))
+            if ((properties.TryGetValue("strike", out var pStrike) || properties.TryGetValue("strikethrough", out pStrike)) && IsTruthy(pStrike))
                 rProps.Strike = new Strike();
             if (properties.TryGetValue("highlight", out var pHighlight))
                 rProps.Highlight = new Highlight { Val = ParseHighlightColor(pHighlight) };
@@ -302,7 +302,7 @@ public partial class WordHandler
             var ulVal = rUnderline.ToLowerInvariant() switch { "true" => "single", "false" or "none" => "none", _ => rUnderline };
             newRProps.Underline = new Underline { Val = new UnderlineValues(ulVal) };
         }
-        if (properties.TryGetValue("strike", out var rStrike) && IsTruthy(rStrike))
+        if ((properties.TryGetValue("strike", out var rStrike) || properties.TryGetValue("strikethrough", out rStrike)) && IsTruthy(rStrike))
             newRProps.Strike = new Strike();
         if (properties.TryGetValue("highlight", out var rHighlight))
             newRProps.Highlight = new Highlight { Val = ParseHighlightColor(rHighlight) };
