@@ -59,6 +59,19 @@ public partial class ExcelHandler
         part.Worksheet ?? throw new InvalidOperationException("Corrupt file: worksheet data missing");
 
     /// <summary>
+    /// Compute the next available CF priority for a worksheet (max existing + 1).
+    /// </summary>
+    private static int NextCfPriority(Worksheet ws)
+    {
+        int max = 0;
+        foreach (var cf in ws.Elements<ConditionalFormatting>())
+            foreach (var rule in cf.Elements<ConditionalFormattingRule>())
+                if (rule.Priority?.HasValue == true && rule.Priority.Value > max)
+                    max = rule.Priority.Value;
+        return max + 1;
+    }
+
+    /// <summary>
     /// Save worksheet with automatic schema-order reorder.
     /// Must be used instead of ws.Save() to prevent element ordering violations.
     /// </summary>

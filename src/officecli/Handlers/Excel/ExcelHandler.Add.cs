@@ -599,7 +599,7 @@ public partial class ExcelHandler
                 var cfRule = new ConditionalFormattingRule
                 {
                     Type = ConditionalFormatValues.DataBar,
-                    Priority = 1
+                    Priority = NextCfPriority(GetSheet(cfWorksheet))
                 };
                 var dataBar = new DataBar();
                 dataBar.Append(new ConditionalFormatValueObject
@@ -665,7 +665,7 @@ public partial class ExcelHandler
                 var csRule = new ConditionalFormattingRule
                 {
                     Type = ConditionalFormatValues.ColorScale,
-                    Priority = 1
+                    Priority = NextCfPriority(GetSheet(csWorksheet))
                 };
                 csRule.Append(colorScale);
 
@@ -726,7 +726,7 @@ public partial class ExcelHandler
                 var isRule = new ConditionalFormattingRule
                 {
                     Type = ConditionalFormatValues.IconSet,
-                    Priority = 1
+                    Priority = NextCfPriority(GetSheet(isWorksheet))
                 };
                 isRule.Append(iconSet);
 
@@ -808,7 +808,7 @@ public partial class ExcelHandler
                 var fcfRule = new ConditionalFormattingRule
                 {
                     Type = ConditionalFormatValues.Expression,
-                    Priority = 1,
+                    Priority = NextCfPriority(GetSheet(fcfWorksheet)),
                     FormatId = dxfId
                 };
                 fcfRule.Append(new Formula(fcfFormula));
@@ -1693,6 +1693,7 @@ public partial class ExcelHandler
                 var cfNewWorksheet = FindWorksheet(cfNewSheetName)
                     ?? throw new ArgumentException($"Sheet not found: {cfNewSheetName}");
                 var cfNewSqref = properties.GetValueOrDefault("sqref") ?? properties.GetValueOrDefault("ref", "A1:A10");
+                var cfNewPriority = NextCfPriority(GetSheet(cfNewWorksheet));
 
                 ConditionalFormattingRule cfNewRule;
                 var typeLower = type.ToLowerInvariant();
@@ -1707,7 +1708,7 @@ public partial class ExcelHandler
                         cfNewRule = new ConditionalFormattingRule
                         {
                             Type = ConditionalFormatValues.Top10,
-                            Priority = 1,
+                            Priority = cfNewPriority,
                             Rank = rank,
                             Percent = percent ? true : null,
                             Bottom = bottom ? true : null
@@ -1720,7 +1721,7 @@ public partial class ExcelHandler
                         cfNewRule = new ConditionalFormattingRule
                         {
                             Type = ConditionalFormatValues.AboveAverage,
-                            Priority = 1,
+                            Priority = cfNewPriority,
                             AboveAverage = ParseHelpers.IsTruthy(aboveBelow) ? null : false
                         };
                         break;
@@ -1730,7 +1731,7 @@ public partial class ExcelHandler
                         cfNewRule = new ConditionalFormattingRule
                         {
                             Type = ConditionalFormatValues.UniqueValues,
-                            Priority = 1
+                            Priority = cfNewPriority
                         };
                         break;
                     }
@@ -1739,7 +1740,7 @@ public partial class ExcelHandler
                         cfNewRule = new ConditionalFormattingRule
                         {
                             Type = ConditionalFormatValues.DuplicateValues,
-                            Priority = 1
+                            Priority = cfNewPriority
                         };
                         break;
                     }
@@ -1749,7 +1750,7 @@ public partial class ExcelHandler
                         cfNewRule = new ConditionalFormattingRule
                         {
                             Type = ConditionalFormatValues.ContainsText,
-                            Priority = 1,
+                            Priority = cfNewPriority,
                             Text = text,
                             Operator = ConditionalFormattingOperatorValues.ContainsText
                         };
@@ -1777,7 +1778,7 @@ public partial class ExcelHandler
                         cfNewRule = new ConditionalFormattingRule
                         {
                             Type = ConditionalFormatValues.TimePeriod,
-                            Priority = 1,
+                            Priority = cfNewPriority,
                             TimePeriod = new EnumValue<TimePeriodValues>(normalizedPeriod switch
                             {
                                 "today" => TimePeriodValues.Today,
