@@ -42,7 +42,8 @@ public partial class PowerPointHandler
                 or "equation" or "math" or "formula"
                 or "table" or "chart" or "placeholder"
                 or "connector" or "connection"
-                or "group" or "notes")
+                or "group" or "notes"
+                or "zoom" or "slidezoom")
                 elementType = t;
         }
 
