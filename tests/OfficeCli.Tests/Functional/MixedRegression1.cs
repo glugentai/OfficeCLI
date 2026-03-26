@@ -252,8 +252,8 @@ public class MixedRegression1 : IDisposable
         var queryCell = queryResults[0];
         // Both should have the same format information
         // BUG: queryCell may miss style info because CellToNode was called without worksheet
-        directCell.Format.Should().ContainKey("font.bold",
-            "Direct Get should include font.bold");
+        directCell.Format.Should().ContainKey("bold",
+            "Direct Get should include bold");
     }
 
     // ==================== BUG #41 (HIGH): Word run-level bold/italic all use bool.Parse not IsTruthy ====================

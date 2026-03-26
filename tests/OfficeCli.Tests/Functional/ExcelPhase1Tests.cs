@@ -44,8 +44,7 @@ public class ExcelPhase1Tests : IDisposable
         _handler.Set("/Sheet1/A1", new() { ["superscript"] = "true" });
 
         var node = _handler.Get("/Sheet1/A1", 0);
-        // Both canonical (font.superscript) and shorthand (superscript) should be present
-        node.Format["font.superscript"].Should().Be(true);
+        // Canonical key only
         node.Format["superscript"].Should().Be(true);
     }
 
@@ -57,7 +56,6 @@ public class ExcelPhase1Tests : IDisposable
         _handler.Set("/Sheet1/A1", new() { ["subscript"] = "true" });
 
         var node = _handler.Get("/Sheet1/A1", 0);
-        node.Format["font.subscript"].Should().Be(true);
         node.Format["subscript"].Should().Be(true);
     }
 

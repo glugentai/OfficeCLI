@@ -90,12 +90,12 @@ public class ExcelNativePathTests : IDisposable
         _handler.Set("Sheet1!A2", new() { ["font.bold"] = "true", ["fill"] = "FF0000" });
 
         var node = _handler.Get("Sheet1!A2");
-        node.Format["font.bold"].Should().Be(true);
+        node.Format["bold"].Should().Be(true);
         node.Format["fill"].Should().Be("#FF0000");
 
         Reopen();
         var nodeAfter = _handler.Get("Sheet1!A2");
-        nodeAfter.Format["font.bold"].Should().Be(true);
+        nodeAfter.Format["bold"].Should().Be(true);
         nodeAfter.Format["fill"].Should().Be("#FF0000");
     }
 
@@ -112,7 +112,7 @@ public class ExcelNativePathTests : IDisposable
         foreach (var cellRef in cells)
         {
             var node = _handler.Get($"/Sheet1/{cellRef}");
-            node.Format["font.bold"].Should().Be(true, $"{cellRef} should be bold");
+            node.Format["bold"].Should().Be(true, $"{cellRef} should be bold");
             node.Format["fill"].Should().Be("#4472C4", $"{cellRef} fill mismatch");
         }
     }
@@ -127,7 +127,7 @@ public class ExcelNativePathTests : IDisposable
         foreach (var cellRef in cells)
         {
             var node = _handler.Get($"Sheet1!{cellRef}");
-            node.Format["font.italic"].Should().Be(true, $"{cellRef} should be italic");
+            node.Format["italic"].Should().Be(true, $"{cellRef} should be italic");
         }
     }
 
@@ -141,7 +141,7 @@ public class ExcelNativePathTests : IDisposable
         foreach (var cellRef in new[] { "A1", "A2", "B1", "B2" })
         {
             var node = _handler.Get($"Sheet1!{cellRef}");
-            node.Format["font.bold"].Should().Be(true, $"{cellRef} bold not persisted");
+            node.Format["bold"].Should().Be(true, $"{cellRef} bold not persisted");
             node.Format["fill"].Should().Be("#FFFF00", $"{cellRef} fill not persisted");
         }
     }
@@ -175,7 +175,7 @@ public class ExcelNativePathTests : IDisposable
         foreach (var cellRef in new[] { "A1", "B1", "C1" })
         {
             var node = _handler.Get($"Sheet1!{cellRef}");
-            node.Format["font.bold"].Should().Be(true, $"{cellRef} should be bold");
+            node.Format["bold"].Should().Be(true, $"{cellRef} should be bold");
         }
     }
 

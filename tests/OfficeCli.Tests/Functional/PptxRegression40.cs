@@ -575,7 +575,7 @@ public class PptxRegression40 : IDisposable
         });
 
         var node = handler.Get("/Sheet1/A1");
-        node.Format.Should().ContainKey("font.bold",
+        node.Format.Should().ContainKey("bold",
             because: "bold formatting should be readable after setting during Add");
     }
 

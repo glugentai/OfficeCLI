@@ -643,13 +643,13 @@ public class PptxRegression46 : IDisposable
         });
 
         var n1 = handler.Get("/Sheet1/A1");
-        n1.Format.Should().ContainKey("font.bold");
+        n1.Format.Should().ContainKey("bold");
 
         handler.Set("/Sheet1/A1", new() { ["clear"] = "true" });
 
         var n2 = handler.Get("/Sheet1/A1");
         n2.Text.Should().BeNullOrEmpty();
-        n2.Format.Should().NotContainKey("font.bold",
+        n2.Format.Should().NotContainKey("bold",
             because: "clear should reset all styling");
     }
 

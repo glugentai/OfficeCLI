@@ -817,10 +817,10 @@ public class PptxRegression52 : IDisposable
 
         var node = handler.Get("/Sheet1/A1");
         node.Should().NotBeNull();
-        node!.Format.Should().ContainKey("font.bold",
-            because: "font.bold should be readable after being set");
+        node!.Format.Should().ContainKey("bold",
+            because: "bold should be readable after being set");
 
-        var boldVal = node.Format["font.bold"];
+        var boldVal = node.Format["bold"];
         // Should be boolean true or string "true" — not false
         (boldVal.ToString() == "True" || boldVal.ToString() == "true" || boldVal.Equals(true))
             .Should().BeTrue(because: "font.bold should be true after being set to true");

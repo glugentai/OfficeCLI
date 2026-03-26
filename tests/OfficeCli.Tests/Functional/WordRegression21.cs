@@ -96,10 +96,10 @@ public class WordRegression21 : IDisposable
         });
 
         var cell = _excelHandler.Get("/Sheet1/A1");
-        cell.Format.Should().ContainKey("font.bold");
+        cell.Format.Should().ContainKey("bold");
 
         // The value should be a boolean true, not a string "true"
-        var boldVal = cell.Format["font.bold"];
+        var boldVal = cell.Format["bold"];
         boldVal.Should().NotBeNull();
         // Verify it can be used in boolean comparisons
         (boldVal is true || boldVal?.ToString() == "True" || boldVal?.ToString() == "true")

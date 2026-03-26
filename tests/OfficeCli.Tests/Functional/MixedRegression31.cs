@@ -439,8 +439,8 @@ public class MixedRegression31 : IDisposable
         // 2. Get + Verify initial state
         var node1 = _excelHandler.Get("/Sheet1/A1");
         node1.Text.Should().Be("Styled cell");
-        node1.Format.Should().ContainKey("font.bold");
-        node1.Format["font.bold"].Should().Be(true);
+        node1.Format.Should().ContainKey("bold");
+        node1.Format["bold"].Should().Be(true);
         node1.Format.Should().ContainKey("fill");
         node1.Format["fill"].ToString().Should().Be("#FFFF00");
 
@@ -456,8 +456,8 @@ public class MixedRegression31 : IDisposable
         ReopenExcel();
         var node3 = _excelHandler.Get("/Sheet1/A1");
         node3.Text.Should().Be("Styled cell");
-        node3.Format.Should().ContainKey("font.bold");
-        node3.Format["font.bold"].Should().Be(true);
+        node3.Format.Should().ContainKey("bold");
+        node3.Format["bold"].Should().Be(true);
         node3.Format.Should().ContainKey("fill");
         node3.Format["fill"].ToString().Should().Be("#00FF00");
     }

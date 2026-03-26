@@ -49,7 +49,7 @@ public class BatchFunctionalTests : IDisposable
         // Verify all cells
         var a1 = handler.Get("/Sheet1/A1");
         a1.Text.Should().Be("Name");
-        a1.Format.Should().ContainKey("font.bold");
+        a1.Format.Should().ContainKey("bold");
 
         var b2 = handler.Get("/Sheet1/B2");
         b2.Text.Should().Be("30");

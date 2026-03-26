@@ -222,7 +222,7 @@ public class ExcelRegression29 : IDisposable
 
         var node = _excelHandler.Get("/Sheet1/A1");
         (string.IsNullOrEmpty(node.Text) || node.Text == "(empty)").Should().BeTrue();
-        node.Format.ContainsKey("font.bold").Should().BeFalse();
+        node.Format.ContainsKey("bold").Should().BeFalse();
     }
 
     // =================================================================
@@ -495,8 +495,8 @@ public class ExcelRegression29 : IDisposable
         });
 
         var node = _excelHandler.Get("/Sheet1/A1");
-        node.Format.Should().ContainKey("font.bold");
-        node.Format.Should().ContainKey("font.italic");
+        node.Format.Should().ContainKey("bold");
+        node.Format.Should().ContainKey("italic");
         node.Format["font.name"]?.ToString().Should().Be("Arial");
         node.Format["font.size"]?.ToString().Should().Be("20pt");
         node.Format.Should().ContainKey("font.strike");
@@ -613,7 +613,7 @@ public class ExcelRegression29 : IDisposable
         {
             var node = _excelHandler.Get($"/Sheet1/A{i}");
             node.Text.Should().Be($"Row {i}");
-            node.Format.Should().ContainKey("font.bold");
+            node.Format.Should().ContainKey("bold");
         }
     }
 
