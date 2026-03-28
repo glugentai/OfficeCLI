@@ -272,11 +272,11 @@ public partial class WordHandler
                     var ilvl = para.ParagraphProperties?.NumberingProperties?.NumberingLevelReference?.Val?.Value ?? 0;
                     var tag = listStyle == "bullet" ? "ul" : "ol";
 
-                    // Adjust nesting
+                    // Adjust nesting (close deeper levels: </ol></li> or </ul></li>)
                     while (listStack.Count > ilvl + 1)
                     {
-                        sb.AppendLine("</li>");
                         sb.AppendLine($"</{listStack.Pop()}>");
+                        sb.AppendLine("</li>");
                     }
                     while (listStack.Count < ilvl + 1)
                     {
@@ -386,8 +386,18 @@ public partial class WordHandler
 
     private static void CloseAllLists(StringBuilder sb, Stack<string> listStack, ref string? currentListType)
     {
+        bool first = true;
         while (listStack.Count > 0)
+        {
             sb.AppendLine($"</{listStack.Pop()}>");
+            // Close wrapper <li> for nested levels (not for the outermost list)
+            if (!first || listStack.Count > 0)
+            {
+                if (listStack.Count > 0)
+                    sb.AppendLine("</li>");
+            }
+            first = false;
+        }
         currentListType = null;
     }
 }
