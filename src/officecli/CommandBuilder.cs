@@ -1643,15 +1643,43 @@ static class CommandBuilder
     }
 
     /// <summary>
-    /// Detect bare key=value tokens in unmatched arguments (user forgot --prop).
+    /// Detect bare key=value tokens and --key value flag patterns in unmatched arguments (user forgot --prop).
+    /// Returns a list of "key=value" strings suitable for --prop suggestions.
     /// </summary>
     internal static List<string> DetectUnmatchedKeyValues(System.CommandLine.ParseResult parseResult)
     {
         var result = new List<string>();
-        foreach (var token in parseResult.UnmatchedTokens)
+        var tokens = parseResult.UnmatchedTokens;
+        var knownPropsLower = new HashSet<string>(KnownProps.Select(p => p.ToLowerInvariant()));
+
+        for (int i = 0; i < tokens.Count; i++)
         {
+            var token = tokens[i];
+
+            // Pattern 1: bare key=value (e.g. "text=Hello")
             if (System.Text.RegularExpressions.Regex.IsMatch(token, @"^[A-Za-z_.][A-Za-z0-9_.]*=.+$"))
+            {
                 result.Add(token);
+                continue;
+            }
+
+            // Pattern 2: --key value (e.g. "--text Hello" or "--fill yellow")
+            // Only match if the key (without --) is a known property name
+            if (token.StartsWith("--") && token.Length > 2)
+            {
+                var key = token[2..];
+                if (knownPropsLower.Contains(key.ToLowerInvariant()) && i + 1 < tokens.Count)
+                {
+                    var nextToken = tokens[i + 1];
+                    // Don't consume the next token if it also looks like a flag
+                    if (!nextToken.StartsWith("--"))
+                    {
+                        result.Add($"{key}={nextToken}");
+                        i++; // skip the value token
+                        continue;
+                    }
+                }
+            }
         }
         return result;
     }
@@ -1680,7 +1708,7 @@ static class CommandBuilder
         "border.color", "border.width", "border.style",
         "font.color", "font.size", "font.name", "font.bold", "font.italic",
         "hyperlink", "link", "tooltip", "alt", "description",
-        "font.strike", "font.underline", "tabColor", "shadow", "glow",
+        "font.strike", "font.underline", "tabColor", "shadow", "glow", "numberformat",
         // Chart properties
         "chartType", "title", "legend", "dataLabels", "labelPos", "labelFont",
         "axisFont", "axisTitle", "catTitle", "axisMin", "axisMax", "majorUnit", "minorUnit",
