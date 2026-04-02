@@ -658,7 +658,27 @@ public partial class ExcelHandler
             ParseCellReference(cellRef);
             var cell = FindCell(data, cellRef);
             if (cell == null)
-                return new DocumentNode { Path = path, Type = "cell", Text = "(empty)", Preview = cellRef };
+            {
+                var emptyNode = new DocumentNode { Path = path, Type = "cell", Text = "(empty)", Preview = cellRef };
+                // Still check merge status for empty cells — they may be part of a merged range
+                if (worksheet != null)
+                {
+                    var mergeCells = GetSheet(worksheet).GetFirstChild<MergeCells>();
+                    if (mergeCells != null)
+                    {
+                        var mergeCell = mergeCells.Elements<MergeCell>()
+                            .FirstOrDefault(m => IsCellInMergeRange(cellRef, m.Reference?.Value));
+                        if (mergeCell != null)
+                        {
+                            var mergeRef = mergeCell.Reference?.Value ?? "";
+                            emptyNode.Format["merge"] = mergeRef;
+                            if (mergeRef.Split(':')[0].Equals(cellRef, StringComparison.OrdinalIgnoreCase))
+                                emptyNode.Format["mergeAnchor"] = true;
+                        }
+                    }
+                }
+                return emptyNode;
+            }
             return CellToNode(sheetNameFromPath, cell, worksheet);
         }
     }

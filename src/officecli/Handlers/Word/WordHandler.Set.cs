@@ -1443,6 +1443,8 @@ public partial class WordHandler
                         break;
                     case "gridspan" or "colspan":
                         var newSpan = ParseHelpers.SafeParseInt(value, "gridspan");
+                        if (newSpan <= 0)
+                            throw new ArgumentException($"Invalid 'gridspan' value: '{value}'. Must be a positive integer (> 0).");
                         tcPr.GridSpan = new GridSpan { Val = newSpan };
                         // Ensure the row has the correct number of tc elements.
                         // Calculate total grid columns occupied by all cells in this row,
