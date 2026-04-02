@@ -100,6 +100,16 @@ public static class EmuConverter
     }
 
     /// <summary>
+    /// Format an EMU value as points (e.g., "2pt"). Used for line widths and other
+    /// thin values where points are more natural than centimeters.
+    /// </summary>
+    public static string FormatLineWidth(long emu)
+    {
+        var pt = emu / 12700.0;
+        return $"{pt:0.##}pt";
+    }
+
+    /// <summary>
     /// Try to parse a dimension string into EMU. Returns false if parsing fails.
     /// </summary>
     public static bool TryParseEmu(string value, out long emu)

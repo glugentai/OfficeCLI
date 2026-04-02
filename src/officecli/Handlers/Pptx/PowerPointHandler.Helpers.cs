@@ -290,6 +290,8 @@ public partial class PowerPointHandler
 
     private static string FormatEmu(long emu) => Core.EmuConverter.FormatEmu(emu);
 
+    private static string FormatLineWidth(long emu) => Core.EmuConverter.FormatLineWidth(emu);
+
     /// <summary>
     /// Normalize DrawingML alignment abbreviations to human-readable values.
     /// OOXML stores "l", "r", "ctr", "just" etc. — we return "left", "right", "center", "justify".
