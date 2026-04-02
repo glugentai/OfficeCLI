@@ -638,6 +638,48 @@ public partial class WordHandler
             return results;
         }
 
+        // Handle style selector — styles live in StylesPart, not Body
+        if (parsed.Element == "style")
+        {
+            var styles = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles;
+            if (styles != null)
+            {
+                int sIdx = 0;
+                foreach (var style in styles.Elements<Style>())
+                {
+                    sIdx++;
+                    var styleId = style.StyleId?.Value ?? "";
+                    var styleName = style.StyleName?.Val?.Value ?? styleId;
+                    var styleNode = new DocumentNode
+                    {
+                        Path = $"/styles/{styleId}",
+                        Type = "style",
+                        Text = styleName
+                    };
+                    styleNode.Format["id"] = styleId;
+                    styleNode.Format["name"] = styleName;
+                    if (style.Type?.Value != null) styleNode.Format["type"] = style.Type.InnerText;
+                    if (style.BasedOn?.Val?.Value != null) styleNode.Format["basedOn"] = style.BasedOn.Val.Value;
+
+                    // Filter by :contains
+                    if (parsed.ContainsText != null && !(styleName.Contains(parsed.ContainsText, StringComparison.OrdinalIgnoreCase) == true))
+                        continue;
+                    // Filter by attributes
+                    bool matchAttrs = true;
+                    foreach (var (attrKey, rawVal) in parsed.Attributes)
+                    {
+                        bool negate = rawVal.StartsWith("!");
+                        var val = negate ? rawVal[1..] : rawVal;
+                        var hasKey = styleNode.Format.TryGetValue(attrKey, out var fmtVal);
+                        bool matches = hasKey && string.Equals(fmtVal?.ToString(), val, StringComparison.OrdinalIgnoreCase);
+                        if (negate ? matches : !matches) { matchAttrs = false; break; }
+                    }
+                    if (matchAttrs) results.Add(styleNode);
+                }
+            }
+            return results;
+        }
+
         // Handle toc selector
         if (parsed.Element is "toc" or "tableofcontents")
         {
@@ -800,6 +842,7 @@ public partial class WordHandler
                 or "field" or "formfield" or "editable"
                 or "table" or "tbl"
                 or "toc" or "tableofcontents"
+                or "style"
                 or "revision" or "change" or "trackchange"
                 or "media"
                 or "hyperlink";
