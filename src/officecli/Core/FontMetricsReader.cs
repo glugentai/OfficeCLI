@@ -173,4 +173,44 @@ internal static class FontMetricsReader
         s_ratioCache[fontFamily] = ratio;
         return ratio;
     }
+
+    // ==================== Ascent/Descent Override ====================
+
+    /// <summary>
+    /// Get CSS ascent-override and descent-override percentages for a font.
+    /// These tell the browser to distribute line-height space according to
+    /// the font's ascent/descent ratio (matching Word's behavior) instead of
+    /// the CSS default half-leading model.
+    /// Returns (0, 0) if the font cannot be found.
+    /// </summary>
+    public static (double ascentPct, double descentPct) GetAscentDescentOverride(string fontFamily)
+    {
+        var path = FindFontFile(fontFamily);
+        if (path == null) return (0, 0);
+
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var reader = new BinaryReader(fs);
+            var offset = GetFontOffset(reader, 0);
+            if (offset < 0) return (0, 0);
+
+            var (headOffset, os2Offset) = FindTables(reader, offset);
+            if (headOffset < 0 || os2Offset < 0) return (0, 0);
+
+            fs.Position = headOffset + 18;
+            var upm = ReadUInt16BE(reader);
+            if (upm == 0) return (0, 0);
+
+            fs.Position = os2Offset + 74;
+            var winAscent = ReadUInt16BE(reader);
+            var winDescent = ReadUInt16BE(reader);
+
+            return (winAscent * 100.0 / upm, winDescent * 100.0 / upm);
+        }
+        catch
+        {
+            return (0, 0);
+        }
+    }
 }
