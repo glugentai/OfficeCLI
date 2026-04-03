@@ -76,18 +76,16 @@ curl -fsSL https://officecli.ai/SKILL.md
 
 ## 開発者向け — 30秒でライブ体験
 
-```bash
-# 1. インストール（macOS / Linux）
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-# Windows (PowerShell): irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+[バイナリをインストール](#インストール)してから：
 
-# 2. 空の PowerPoint を作成
+```bash
+# 1. 空の PowerPoint を作成
 officecli create deck.pptx
 
-# 3. ライブプレビューを開始 — ブラウザで http://localhost:26315 が開きます
+# 2. ライブプレビューを開始 — ブラウザで http://localhost:26315 が開きます
 officecli watch deck.pptx --port 26315
 
-# 4. 別のターミナルを開いてスライドを追加 — ブラウザが即座に更新されます
+# 3. 別のターミナルを開いてスライドを追加 — ブラウザが即座に更新されます
 officecli add deck.pptx / --type slide --prop title="Hello, World!"
 ```
 

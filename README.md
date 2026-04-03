@@ -76,18 +76,16 @@ Just describe what you want, and AionUi handles the rest.
 
 ## For Developers — See It Live in 30 Seconds
 
-```bash
-# 1. Install (macOS / Linux)
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-# Windows (PowerShell): irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+[Install the binary](#installation), then:
 
-# 2. Create a blank PowerPoint
+```bash
+# 1. Create a blank PowerPoint
 officecli create deck.pptx
 
-# 3. Start live preview — opens http://localhost:26315 in your browser
+# 2. Start live preview — opens http://localhost:26315 in your browser
 officecli watch deck.pptx --port 26315
 
-# 4. Open another terminal, add a slide — watch the browser update instantly
+# 3. Open another terminal, add a slide — watch the browser update instantly
 officecli add deck.pptx / --type slide --prop title="Hello, World!"
 ```
 
