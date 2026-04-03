@@ -1006,6 +1006,10 @@ internal class ChartSvgRenderer
     public void RenderChartSvgContent(StringBuilder sb, ChartInfo info, int svgW, int svgH,
         int marginLeft = 45, int marginTop = 10, int marginRight = 15, int marginBottom = 30)
     {
+        // Sync instance font sizes from ChartInfo
+        ValFontPx = info.ValFontPx;
+        CatFontPx = info.CatFontPx;
+
         var plotW = svgW - marginLeft - marginRight;
         var plotH = svgH - marginTop - marginBottom;
         if (plotW < 10 || plotH < 10) return;
