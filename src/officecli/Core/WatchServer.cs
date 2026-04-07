@@ -1098,8 +1098,20 @@ public class WatchServer : IDisposable
         try
         {
             var req = JsonSerializer.Deserialize(json, WatchMarkJsonContext.Default.MarkRequest);
-            if (req == null || string.IsNullOrEmpty(req.Path))
+            // BUG-FUZZER-003: whitespace-only path slips past IsNullOrEmpty,
+            // gets stored, and immediately reconciles to stale — wasting a
+            // mark slot and bumping the version counter for a no-op.
+            if (req == null || string.IsNullOrWhiteSpace(req.Path))
                 return "{\"error\":\"invalid request\"}";
+
+            // BUG-TESTER-002: validate color server-side. The browser sets
+            // el.style.backgroundColor = mark.color verbatim, so an unsanitized
+            // value injects CSS into every connected SSE client. Server is the
+            // single trust boundary for both human-typed CLI and machine agents.
+            // CONSISTENCY(mark-color-validation): one validator, both Add and
+            // any future Set/update path must call IsValidMarkColor.
+            if (!string.IsNullOrEmpty(req.Color) && !IsValidMarkColor(req.Color))
+                return "{\"error\":\"invalid color\"}";
 
             var mark = new WatchMark
             {
@@ -1162,8 +1174,11 @@ public class WatchServer : IDisposable
                     removed = _currentMarks.Count;
                     _currentMarks.Clear();
                 }
-                else if (!string.IsNullOrEmpty(req.Path))
+                else if (!string.IsNullOrWhiteSpace(req.Path))
                 {
+                    // BUG-FUZZER-003: same whitespace-only guard as HandleMarkAdd —
+                    // a "   " path could never have been stored anyway, so reject
+                    // it here to keep both add and remove paths consistent.
                     removed = _currentMarks.RemoveAll(m =>
                         string.Equals(m.Path, req.Path, StringComparison.Ordinal));
                 }
@@ -1227,6 +1242,59 @@ public class WatchServer : IDisposable
 
     private static readonly System.Text.RegularExpressions.Regex _tagStripRx =
         new("<[^>]+>", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // BUG-TESTER-001: ResolveMark accepts arbitrary user regex via r"..." find
+    // strings. A catastrophically backtracking pattern (e.g. r"(a+)+$") against
+    // a long input would freeze the watch reconcile loop indefinitely. Bound
+    // every user-supplied regex evaluation with this match timeout.
+    private static readonly TimeSpan MarkRegexMatchTimeout = TimeSpan.FromMilliseconds(500);
+
+    // BUG-TESTER-003: <script> and <style> bodies must be removed entirely
+    // before tag-stripping, otherwise their inner text leaks into find matching
+    // (e.g. find="secret" hits "<script>secret data</script>"). These regexes
+    // strip the element including children, case-insensitive, dot-matches-newline.
+    private static readonly System.Text.RegularExpressions.Regex _scriptBodyRx =
+        new("<script\\b[^>]*>.*?</script\\s*>",
+            System.Text.RegularExpressions.RegexOptions.Compiled
+            | System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.Singleline);
+    private static readonly System.Text.RegularExpressions.Regex _styleBodyRx =
+        new("<style\\b[^>]*>.*?</style\\s*>",
+            System.Text.RegularExpressions.RegexOptions.Compiled
+            | System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+    // BUG-TESTER-002: server-side color whitelist for mark.color. Anything
+    // accepted here gets written verbatim into el.style.backgroundColor on
+    // every connected browser, so the validator must REJECT anything that
+    // isn't unambiguously a color value. Three accepted shapes:
+    //   1. #RGB / #RRGGBB / #RRGGBBAA hex
+    //   2. rgb(r,g,b) / rgba(r,g,b,a) with numeric components
+    //   3. one of the named colors in MarkNamedColors
+    // CONSISTENCY(mark-color-validation): grep this tag if expanding the set.
+    private static readonly System.Text.RegularExpressions.Regex _hexColorRx =
+        new("^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex _rgbFuncRx =
+        new("^rgba?\\(\\s*\\d+(?:\\.\\d+)?\\s*,\\s*\\d+(?:\\.\\d+)?\\s*,\\s*\\d+(?:\\.\\d+)?(?:\\s*,\\s*\\d+(?:\\.\\d+)?)?\\s*\\)$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly HashSet<string> MarkNamedColors = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "red", "green", "blue", "yellow", "orange", "purple", "pink", "cyan",
+        "magenta", "brown", "black", "white", "gray", "grey", "lime", "teal",
+        "navy", "olive", "maroon", "silver", "gold", "transparent",
+    };
+
+    internal static bool IsValidMarkColor(string color)
+    {
+        if (string.IsNullOrWhiteSpace(color)) return false;
+        var c = color.Trim();
+        if (c.Length > 64) return false; // defensive bound
+        if (MarkNamedColors.Contains(c)) return true;
+        if (_hexColorRx.IsMatch(c)) return true;
+        if (_rgbFuncRx.IsMatch(c)) return true;
+        return false;
+    }
 
     /// <summary>
     /// Locate the element with the given data-path in the cached HTML snapshot
@@ -1300,7 +1368,12 @@ public class WatchServer : IDisposable
     internal static string ExtractTextContent(string htmlFragment)
     {
         if (string.IsNullOrEmpty(htmlFragment)) return "";
-        var stripped = _tagStripRx.Replace(htmlFragment, "");
+        // BUG-TESTER-003: drop <script>...</script> and <style>...</style> bodies
+        // BEFORE per-tag stripping. _tagStripRx only removes tags, so without
+        // this step inner JS/CSS text leaks into find matching.
+        var noScript = _scriptBodyRx.Replace(htmlFragment, "");
+        var noStyle = _styleBodyRx.Replace(noScript, "");
+        var stripped = _tagStripRx.Replace(noStyle, "");
         var decoded = System.Net.WebUtility.HtmlDecode(stripped);
         try { return decoded.Normalize(System.Text.NormalizationForm.FormC); }
         catch { return decoded; }
@@ -1368,7 +1441,12 @@ public class WatchServer : IDisposable
             var pattern = find.Substring(2, find.Length - 3);
             try
             {
-                var matches = System.Text.RegularExpressions.Regex.Matches(text, pattern);
+                // BUG-TESTER-001: bound the match with MarkRegexMatchTimeout so a
+                // catastrophic backtracker cannot freeze the reconcile loop.
+                var matches = System.Text.RegularExpressions.Regex.Matches(
+                    text, pattern,
+                    System.Text.RegularExpressions.RegexOptions.None,
+                    MarkRegexMatchTimeout);
                 if (matches.Count == 0)
                 {
                     resolved.Stale = true;
@@ -1377,6 +1455,14 @@ public class WatchServer : IDisposable
                 var list = new string[matches.Count];
                 for (int i = 0; i < matches.Count; i++) list[i] = matches[i].Value;
                 resolved.MatchedText = list;
+                return resolved;
+            }
+            catch (System.Text.RegularExpressions.RegexMatchTimeoutException)
+            {
+                // Pattern took too long against this input → treat as stale with
+                // empty matches. Future reconciles will retry against fresh HTML.
+                resolved.Stale = true;
+                resolved.MatchedText = Array.Empty<string>();
                 return resolved;
             }
             catch
