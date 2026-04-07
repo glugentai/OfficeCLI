@@ -14,8 +14,9 @@ public partial class PowerPointHandler
 {
     // ==================== Table Rendering ====================
 
-    private static void RenderTable(StringBuilder sb, GraphicFrame gf, Dictionary<string, string> themeColors)
+    private static void RenderTable(StringBuilder sb, GraphicFrame gf, Dictionary<string, string> themeColors, string? dataPath = null)
     {
+        var dataPathAttr = string.IsNullOrEmpty(dataPath) ? "" : $" data-path=\"{HtmlEncode(dataPath)}\"";
         var table = gf.Descendants<Drawing.Table>().FirstOrDefault();
         if (table == null) return;
 
@@ -35,7 +36,7 @@ public partial class PowerPointHandler
         bool hasFirstRow = tblPr?.FirstRow?.Value == true;
         bool hasBandRow = tblPr?.BandRow?.Value == true;
 
-        sb.AppendLine($"    <div class=\"table-container\" style=\"left:{Units.EmuToPt(x)}pt;top:{Units.EmuToPt(y)}pt;width:{Units.EmuToPt(cx)}pt;height:{Units.EmuToPt(cy)}pt\">");
+        sb.AppendLine($"    <div class=\"table-container\"{dataPathAttr} style=\"left:{Units.EmuToPt(x)}pt;top:{Units.EmuToPt(y)}pt;width:{Units.EmuToPt(cx)}pt;height:{Units.EmuToPt(cy)}pt\">");
         sb.AppendLine("      <table class=\"slide-table\">");
 
         // Column widths

@@ -17,8 +17,9 @@ public partial class PowerPointHandler
     // Chart text color — set per-chart, also used by SvgPreview
     private string _chartValueColor = "#D0D8E0";
 
-    private void RenderChart(StringBuilder sb, GraphicFrame gf, SlidePart slidePart, Dictionary<string, string> themeColors)
+    private void RenderChart(StringBuilder sb, GraphicFrame gf, SlidePart slidePart, Dictionary<string, string> themeColors, string? dataPath = null)
     {
+        var dataPathAttr = string.IsNullOrEmpty(dataPath) ? "" : $" data-path=\"{HtmlEncode(dataPath)}\"";
         // Position and size from p:xfrm
         var pxfrm = gf.GetFirstChild<DocumentFormat.OpenXml.Presentation.Transform>();
         var off = pxfrm?.GetFirstChild<Drawing.Offset>();
@@ -99,7 +100,7 @@ public partial class PowerPointHandler
 
         // Container with chart background
         var bgStyle = info.ChartFillColor != null ? $"background:#{info.ChartFillColor};" : "background:transparent;";
-        sb.AppendLine($"    <div class=\"shape\" style=\"left:{x}pt;top:{y}pt;width:{w}pt;height:{h}pt;{bgStyle}display:flex;flex-direction:column;overflow:hidden\">");
+        sb.AppendLine($"    <div class=\"shape\"{dataPathAttr} style=\"left:{x}pt;top:{y}pt;width:{w}pt;height:{h}pt;{bgStyle}display:flex;flex-direction:column;overflow:hidden\">");
 
         // Title
         if (!string.IsNullOrEmpty(info.Title))

@@ -46,6 +46,74 @@ public class WatchServer : IDisposable
         (function() {
             var es = new EventSource('/events');
             var _scrollTimer = null;
+            // ===== Selection sync =====
+            // Single source of truth: server's currentSelection. We keep a local
+            // mirror updated by the server's SSE 'selection-update' broadcasts so
+            // that we can re-apply highlights after every DOM swap.
+            var _selection = [];
+            function applySelectionToDom() {
+                document.querySelectorAll('.officecli-selected').forEach(function(el) {
+                    el.classList.remove('officecli-selected');
+                });
+                _selection.forEach(function(path) {
+                    try {
+                        var sel = '[data-path="' + path.replace(/"/g, '\\"') + '"]';
+                        document.querySelectorAll(sel).forEach(function(el) {
+                            el.classList.add('officecli-selected');
+                        });
+                    } catch (e) {}
+                });
+            }
+            function postSelection(paths) {
+                fetch('/api/selection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paths: paths })
+                }).catch(function() {});
+            }
+            // Inject selection highlight CSS
+            (function() {
+                var style = document.createElement('style');
+                style.textContent =
+                    '.officecli-selected{outline:2px solid #2196f3 !important;' +
+                    'outline-offset:2px;' +
+                    'box-shadow:0 0 12px rgba(33,150,243,0.6) !important;' +
+                    'z-index:1000;}';
+                document.head.appendChild(style);
+            })();
+            // Click handler — selects the closest element with [data-path].
+            // shift/ctrl/cmd toggle multi-select; plain click replaces.
+            document.addEventListener('click', function(e) {
+                var target = e.target.closest('[data-path]');
+                if (!target) {
+                    if (!e.shiftKey && !e.ctrlKey && !e.metaKey && _selection.length > 0) {
+                        _selection = [];
+                        postSelection([]);
+                    }
+                    return;
+                }
+                var path = target.getAttribute('data-path');
+                if (!path) return;
+                if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                    var idx = _selection.indexOf(path);
+                    if (idx >= 0) _selection.splice(idx, 1);
+                    else _selection.push(path);
+                } else {
+                    _selection = [path];
+                }
+                postSelection(_selection);
+                e.preventDefault();
+                e.stopPropagation();
+            }, true);
+            // SSE: receive selection updates from any browser (including ours)
+            es.addEventListener('update', function(e) {
+                var msg;
+                try { msg = JSON.parse(e.data); } catch (err) { return; }
+                if (msg.action === 'selection-update') {
+                    _selection = msg.paths || [];
+                    applySelectionToDom();
+                }
+            });
             function scrollToSlide(num) {
                 clearTimeout(_scrollTimer);
                 _scrollTimer = setTimeout(function() {
@@ -309,6 +377,8 @@ public class WatchServer : IDisposable
                         if (msg.scrollTo && targetSheetIdx < 0) {
                             window._pendingScrollTo = msg.scrollTo;
                         }
+                        // Re-apply selection after the body swap destroyed previous .officecli-selected
+                        applySelectionToDom();
                     });
                     return;
                 }
@@ -326,6 +396,7 @@ public class WatchServer : IDisposable
                     } else {
                         location.reload();
                     }
+                    applySelectionToDom();
                 } else if (msg.action === 'remove') {
                     var el = document.querySelector('.slide-container[data-slide="' + slideNum + '"]');
                     if (el) el.remove();
@@ -334,6 +405,7 @@ public class WatchServer : IDisposable
                         c.setAttribute('data-slide', i + 1);
                     });
                     syncThumbs();
+                    applySelectionToDom();
                 } else if (msg.action === 'add') {
                     var main = document.querySelector('.main');
                     if (main) {
@@ -345,6 +417,7 @@ public class WatchServer : IDisposable
                     }
                     syncThumbs();
                     scrollToSlide(slideNum);
+                    applySelectionToDom();
                 }
             });
         })();
@@ -993,6 +1066,25 @@ public class WatchServer : IDisposable
 
         _lastActivityTime = DateTime.UtcNow;
         lock (_sseLock) { _sseClients.Add(stream); }
+
+        // Send the current selection immediately so the new client can highlight
+        // any elements that are already selected by other browsers viewing the same file.
+        try
+        {
+            string[] snapshot;
+            lock (_selectionLock) { snapshot = _currentSelection.ToArray(); }
+            var sb = new StringBuilder();
+            sb.Append("{\"action\":\"selection-update\",\"paths\":[");
+            for (int i = 0; i < snapshot.Length; i++)
+            {
+                if (i > 0) sb.Append(',');
+                AppendJsonString(sb, snapshot[i]);
+            }
+            sb.Append("]}");
+            var initEvt = Encoding.UTF8.GetBytes($"event: update\ndata: {sb}\n\n");
+            await stream.WriteAsync(initEvt, token);
+        }
+        catch { }
 
         try
         {

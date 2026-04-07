@@ -351,27 +351,44 @@ public partial class PowerPointHandler
         var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree;
         if (shapeTree == null) return;
 
+        // Per-element-type positional counters used to build the data-path of each
+        // top-level element. We prefer @id= when the element has a cNvPr id (stable
+        // across edits), and fall back to positional [N] otherwise.
+        int shapeIdx = 0, picIdx = 0, tableIdx = 0, chartIdx = 0, cxnIdx = 0, groupIdx = 0;
+        string PathFor(string typeName, OpenXmlElement el, int positional)
+            => $"/slide[{slideNum}]/{BuildElementPathSegment(typeName, el, positional)}";
+
         // Collect all content elements in z-order (as they appear in XML)
         foreach (var element in shapeTree.ChildElements)
         {
             switch (element)
             {
                 case Shape shape:
-                    RenderShape(sb, shape, slidePart, themeColors);
+                    shapeIdx++;
+                    RenderShape(sb, shape, slidePart, themeColors, dataPath: PathFor("shape", shape, shapeIdx));
                     break;
                 case Picture pic:
-                    RenderPicture(sb, pic, slidePart, themeColors);
+                    picIdx++;
+                    RenderPicture(sb, pic, slidePart, themeColors, dataPath: PathFor("picture", pic, picIdx));
                     break;
                 case GraphicFrame gf:
                     if (gf.Descendants<Drawing.Table>().Any())
-                        RenderTable(sb, gf, themeColors);
+                    {
+                        tableIdx++;
+                        RenderTable(sb, gf, themeColors, dataPath: PathFor("table", gf, tableIdx));
+                    }
                     else if (gf.Descendants().Any(e => e.LocalName == "chart" && e.NamespaceUri.Contains("chart")))
-                        RenderChart(sb, gf, slidePart, themeColors);
+                    {
+                        chartIdx++;
+                        RenderChart(sb, gf, slidePart, themeColors, dataPath: PathFor("chart", gf, chartIdx));
+                    }
                     break;
                 case ConnectionShape cxn:
-                    RenderConnector(sb, cxn, themeColors);
+                    cxnIdx++;
+                    RenderConnector(sb, cxn, themeColors, dataPath: PathFor("connector", cxn, cxnIdx));
                     break;
                 case GroupShape grp:
+                    groupIdx++;
                     RenderGroup(sb, grp, slidePart, themeColors);
                     break;
                 default:

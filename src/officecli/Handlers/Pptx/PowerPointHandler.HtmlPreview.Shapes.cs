@@ -19,8 +19,10 @@ public partial class PowerPointHandler
     /// with the adjusted coordinates — the original element is NEVER modified.
     /// </summary>
     private static void RenderShape(StringBuilder sb, Shape shape, OpenXmlPart part,
-        Dictionary<string, string> themeColors, (long x, long y, long cx, long cy)? overridePos = null)
+        Dictionary<string, string> themeColors, (long x, long y, long cx, long cy)? overridePos = null,
+        string? dataPath = null)
     {
+        var dataPathAttr = string.IsNullOrEmpty(dataPath) ? "" : $" data-path=\"{HtmlEncode(dataPath)}\"";
         var xfrm = shape.ShapeProperties?.Transform2D;
 
         long x, y, cx, cy;
@@ -252,7 +254,7 @@ public partial class PowerPointHandler
                 else
                     outerStyles.Add(s);
             }
-            sb.Append($"    <div class=\"{shapeClass}\" style=\"{string.Join(";", outerStyles)}\">");
+            sb.Append($"    <div class=\"{shapeClass}\"{dataPathAttr} style=\"{string.Join(";", outerStyles)}\">");
             // Fill layer (clipped)
             if (fillStyles.Count > 0)
                 sb.Append($"<div style=\"position:absolute;inset:0;{clipPathCss};{string.Join(";", fillStyles)}\"></div>");
@@ -272,7 +274,7 @@ public partial class PowerPointHandler
         }
         else
         {
-            sb.Append($"    <div class=\"{shapeClass}\" style=\"{string.Join(";", styles)}\">");
+            sb.Append($"    <div class=\"{shapeClass}\"{dataPathAttr} style=\"{string.Join(";", styles)}\">");
         }
 
         // Text content
@@ -623,8 +625,10 @@ public partial class PowerPointHandler
     /// with the adjusted coordinates — the original element is NEVER modified.
     /// </summary>
     private static void RenderPicture(StringBuilder sb, Picture pic, OpenXmlPart slidePart,
-        Dictionary<string, string> themeColors, (long x, long y, long cx, long cy)? overridePos = null)
+        Dictionary<string, string> themeColors, (long x, long y, long cx, long cy)? overridePos = null,
+        string? dataPath = null)
     {
+        var dataPathAttr = string.IsNullOrEmpty(dataPath) ? "" : $" data-path=\"{HtmlEncode(dataPath)}\"";
         var xfrm = pic.ShapeProperties?.Transform2D;
         if (xfrm?.Offset == null || xfrm?.Extents == null) return;
 
@@ -674,7 +678,7 @@ public partial class PowerPointHandler
                 styles.Add(geomCss);
         }
 
-        sb.Append($"    <div class=\"picture\" style=\"{string.Join(";", styles)}\">");
+        sb.Append($"    <div class=\"picture\"{dataPathAttr} style=\"{string.Join(";", styles)}\">");
 
         // Extract image data
         var blipFill = pic.BlipFill;
@@ -721,7 +725,7 @@ public partial class PowerPointHandler
 
     // ==================== Connector Rendering ====================
 
-    private static void RenderConnector(StringBuilder sb, ConnectionShape cxn, Dictionary<string, string> themeColors)
+    private static void RenderConnector(StringBuilder sb, ConnectionShape cxn, Dictionary<string, string> themeColors, string? dataPath = null)
     {
         var xfrm = cxn.ShapeProperties?.Transform2D;
         if (xfrm?.Offset == null || xfrm?.Extents == null) return;
@@ -835,7 +839,8 @@ public partial class PowerPointHandler
             markerDefs = defs.ToString();
         }
 
-        sb.AppendLine($"    <div class=\"connector\" style=\"left:{Units.EmuToPt(renderX)}pt;top:{Units.EmuToPt(renderY)}pt;width:{widthPt}pt;height:{heightPt}pt\">");
+        var dataPathAttr = string.IsNullOrEmpty(dataPath) ? "" : $" data-path=\"{HtmlEncode(dataPath)}\"";
+        sb.AppendLine($"    <div class=\"connector\"{dataPathAttr} style=\"left:{Units.EmuToPt(renderX)}pt;top:{Units.EmuToPt(renderY)}pt;width:{widthPt}pt;height:{heightPt}pt\">");
         sb.AppendLine($"      <svg width=\"100%\" height=\"100%\" preserveAspectRatio=\"none\" style=\"overflow:visible\">");
         if (!string.IsNullOrEmpty(markerDefs))
             sb.AppendLine($"        {markerDefs}");
