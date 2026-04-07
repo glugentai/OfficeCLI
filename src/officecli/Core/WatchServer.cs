@@ -83,7 +83,10 @@ public class WatchServer : IDisposable
             })();
             // Click handler — selects the closest element with [data-path].
             // shift/ctrl/cmd toggle multi-select; plain click replaces.
+            // Skipped if a rubber-band drag just finished.
+            var _suppressNextClick = false;
             document.addEventListener('click', function(e) {
+                if (_suppressNextClick) { _suppressNextClick = false; return; }
                 var target = e.target.closest('[data-path]');
                 if (!target) {
                     if (!e.shiftKey && !e.ctrlKey && !e.metaKey && _selection.length > 0) {
@@ -105,6 +108,85 @@ public class WatchServer : IDisposable
                 e.preventDefault();
                 e.stopPropagation();
             }, true);
+            // ===== Rubber-band (box) selection =====
+            // Press on empty space (no [data-path] under cursor) and drag to draw a
+            // selection rectangle. Any element whose bounding box intersects the
+            // rectangle gets selected. Shift adds to current selection; plain replaces.
+            // Esc cancels mid-drag.
+            var _rubber = null; // {startX, startY, shift, div}
+            var _RUBBER_THRESHOLD = 5; // px before treating as drag (vs click)
+            document.addEventListener('mousedown', function(e) {
+                if (e.button !== 0) return;
+                if (e.target.closest('[data-path]')) return;
+                // Ignore mousedown inside scrollbars / sidebar / interactive UI
+                if (e.target.closest('.sidebar, .sidebar-toggle, .page-counter, button, input, a')) return;
+                _rubber = { startX: e.clientX, startY: e.clientY, shift: e.shiftKey, div: null };
+            }, true);
+            document.addEventListener('mousemove', function(e) {
+                if (!_rubber) return;
+                var dx = e.clientX - _rubber.startX;
+                var dy = e.clientY - _rubber.startY;
+                if (!_rubber.div) {
+                    if (Math.abs(dx) < _RUBBER_THRESHOLD && Math.abs(dy) < _RUBBER_THRESHOLD) return;
+                    var d = document.createElement('div');
+                    d.id = '_officecli_rubber';
+                    d.style.cssText = 'position:fixed;border:1.5px dashed #2196f3;' +
+                        'background:rgba(33,150,243,0.12);pointer-events:none;' +
+                        'z-index:99999;left:0;top:0;width:0;height:0;';
+                    document.body.appendChild(d);
+                    _rubber.div = d;
+                }
+                var x = Math.min(e.clientX, _rubber.startX);
+                var y = Math.min(e.clientY, _rubber.startY);
+                _rubber.div.style.left = x + 'px';
+                _rubber.div.style.top = y + 'px';
+                _rubber.div.style.width = Math.abs(dx) + 'px';
+                _rubber.div.style.height = Math.abs(dy) + 'px';
+            }, true);
+            document.addEventListener('mouseup', function(e) {
+                if (!_rubber) return;
+                var rb = _rubber;
+                _rubber = null;
+                if (!rb.div) return; // didn't move enough — let normal click flow run
+                rb.div.remove();
+                var rect = {
+                    left: Math.min(e.clientX, rb.startX),
+                    top: Math.min(e.clientY, rb.startY),
+                    right: Math.max(e.clientX, rb.startX),
+                    bottom: Math.max(e.clientY, rb.startY)
+                };
+                // Hit-test: any [data-path] element that intersects the rect (counts
+                // even partial overlap, like Figma — easier to use than full-contain)
+                var hits = [];
+                document.querySelectorAll('[data-path]').forEach(function(el) {
+                    var r = el.getBoundingClientRect();
+                    if (r.width === 0 || r.height === 0) return;
+                    if (r.left < rect.right && r.right > rect.left &&
+                        r.top < rect.bottom && r.bottom > rect.top) {
+                        var p = el.getAttribute('data-path');
+                        if (p && hits.indexOf(p) < 0) hits.push(p);
+                    }
+                });
+                if (rb.shift) {
+                    hits.forEach(function(p) {
+                        if (_selection.indexOf(p) < 0) _selection.push(p);
+                    });
+                } else {
+                    _selection = hits;
+                }
+                postSelection(_selection);
+                // Suppress the synthetic click that fires right after mouseup, otherwise
+                // the click-on-empty-space handler would clear the selection we just made.
+                _suppressNextClick = true;
+                e.preventDefault();
+                e.stopPropagation();
+            }, true);
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && _rubber) {
+                    if (_rubber.div) _rubber.div.remove();
+                    _rubber = null;
+                }
+            });
             // SSE: receive selection updates from any browser (including ours)
             es.addEventListener('update', function(e) {
                 var msg;
