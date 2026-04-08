@@ -4950,6 +4950,13 @@ internal static class PivotTableHelper
         var styleInfo = pivotDef.PivotTableStyle;
         if (styleInfo?.Name?.HasValue == true)
             node.Format["style"] = styleInfo.Name.Value;
+
+        // R11-3: Grand totals readback. Both attributes default to true in
+        // OOXML, so emit "true" when absent (default) and reflect explicit
+        // false. Canonical key matches Add/Set input ('rowGrandTotals' /
+        // 'colGrandTotals') per CLAUDE.md canonical Format rules.
+        node.Format["rowGrandTotals"] = (pivotDef.RowGrandTotals?.Value ?? true) ? "true" : "false";
+        node.Format["colGrandTotals"] = (pivotDef.ColumnGrandTotals?.Value ?? true) ? "true" : "false";
     }
 
     /// <summary>
