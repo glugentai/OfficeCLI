@@ -710,21 +710,7 @@ internal static class PivotTableHelper
             }
         }
 
-        double Reduce(IEnumerable<double> values, string func)
-        {
-            // Match LibreOffice's ScDPAggData (dptabres.cxx) aggregator semantics.
-            var arr = values as double[] ?? values.ToArray();
-            if (arr.Length == 0) return 0;
-            return func.ToLowerInvariant() switch
-            {
-                "sum" => arr.Sum(),
-                "count" => arr.Length,
-                "average" or "avg" => arr.Average(),
-                "min" => arr.Min(),
-                "max" => arr.Max(),
-                _ => arr.Sum()
-            };
-        }
+        double Reduce(IEnumerable<double> values, string func) => ReducePivotValues(values, func);
 
         // Compute the K-deep cell matrix + row/col/grand totals per data field.
         // matrix[r, c, d] = reduce(values for row r, col c, data field d)
@@ -1013,20 +999,7 @@ internal static class PivotTableHelper
             }
         }
 
-        double Reduce(IEnumerable<double> values, string func)
-        {
-            var arr = values as double[] ?? values.ToArray();
-            if (arr.Length == 0) return 0;
-            return func.ToLowerInvariant() switch
-            {
-                "sum" => arr.Sum(),
-                "count" => arr.Length,
-                "average" or "avg" => arr.Average(),
-                "min" => arr.Min(),
-                "max" => arr.Max(),
-                _ => arr.Sum()
-            };
-        }
+        double Reduce(IEnumerable<double> values, string func) => ReducePivotValues(values, func);
 
         // The closures below compute the cell values per (row pos, col pos, d)
         // by reducing raw value lists. Each closure takes a data field index d
@@ -1303,20 +1276,7 @@ internal static class PivotTableHelper
             }
         }
 
-        double Reduce(IEnumerable<double> values, string func)
-        {
-            var arr = values as double[] ?? values.ToArray();
-            if (arr.Length == 0) return 0;
-            return func.ToLowerInvariant() switch
-            {
-                "sum" => arr.Sum(),
-                "count" => arr.Length,
-                "average" or "avg" => arr.Average(),
-                "min" => arr.Min(),
-                "max" => arr.Max(),
-                _ => arr.Sum()
-            };
-        }
+        double Reduce(IEnumerable<double> values, string func) => ReducePivotValues(values, func);
 
         // Per-(row, outerCol, innerCol, d) reductions over raw values.
         double LeafCell(string row, string outerCol, string innerCol, int d)
@@ -1664,20 +1624,7 @@ internal static class PivotTableHelper
             }
         }
 
-        double Reduce(IEnumerable<double> values, string func)
-        {
-            var arr = values as double[] ?? values.ToArray();
-            if (arr.Length == 0) return 0;
-            return func.ToLowerInvariant() switch
-            {
-                "sum" => arr.Sum(),
-                "count" => arr.Length,
-                "average" or "avg" => arr.Average(),
-                "min" => arr.Min(),
-                "max" => arr.Max(),
-                _ => arr.Sum()
-            };
-        }
+        double Reduce(IEnumerable<double> values, string func) => ReducePivotValues(values, func);
 
         // The 9 cell-value closures from the K=1 path now each take a data
         // field index d so the right aggregator is applied per cell.
@@ -2082,20 +2029,7 @@ internal static class PivotTableHelper
             }
         }
 
-        double Reduce(IEnumerable<double> values, string func)
-        {
-            var arr = values as double[] ?? values.ToArray();
-            if (arr.Length == 0) return 0;
-            return func.ToLowerInvariant() switch
-            {
-                "sum" => arr.Sum(),
-                "count" => arr.Length,
-                "average" or "avg" => arr.Average(),
-                "min" => arr.Min(),
-                "max" => arr.Max(),
-                _ => arr.Sum()
-            };
-        }
+        double Reduce(IEnumerable<double> values, string func) => ReducePivotValues(values, func);
 
         // Compute the value at (rowNode, colNode, dataFieldIdx).
         // Subtotal nodes have shorter Path arrays than leaves; the prefix match
@@ -4121,14 +4055,82 @@ internal static class PivotTableHelper
         {
             "sum" => DataConsolidateFunctionValues.Sum,
             "count" => DataConsolidateFunctionValues.Count,
+            "countnums" or "countnum" => DataConsolidateFunctionValues.CountNumbers,
             "average" or "avg" => DataConsolidateFunctionValues.Average,
             "max" => DataConsolidateFunctionValues.Maximum,
             "min" => DataConsolidateFunctionValues.Minimum,
             "product" => DataConsolidateFunctionValues.Product,
-            "stddev" => DataConsolidateFunctionValues.StandardDeviation,
-            "var" => DataConsolidateFunctionValues.Variance,
+            "stddev" or "std" => DataConsolidateFunctionValues.StandardDeviation,
+            "stddevp" or "stdp" => DataConsolidateFunctionValues.StandardDeviationP,
+            "var" or "variance" => DataConsolidateFunctionValues.Variance,
+            "varp" => DataConsolidateFunctionValues.VarianceP,
             _ => DataConsolidateFunctionValues.Sum
         };
+    }
+
+    /// <summary>
+    /// Aggregate a bag of numeric values using the given subtotal function.
+    /// Matches LibreOffice's ScDPAggData semantics (sc/source/core/data/dptabres.cxx):
+    ///   sum / product / min / max / count : trivial
+    ///   countNums : count of numeric entries (identical to count here because
+    ///     the caller only places parsed numerics into the bag)
+    ///   average : arithmetic mean
+    ///   stdDev  : sample std-dev  (sqrt(Σ(x-μ)²/(n-1))), requires n≥2
+    ///   stdDevp : population std-dev (sqrt(Σ(x-μ)²/n)), requires n≥1
+    ///   var     : sample variance (Σ(x-μ)²/(n-1)), requires n≥2
+    ///   varp    : population variance (Σ(x-μ)²/n), requires n≥1
+    /// Returns 0 for empty input and for stdDev/var when n&lt;2, matching the
+    /// existing 0-on-empty convention that the rest of the renderer assumes.
+    /// </summary>
+    private static double ReducePivotValues(IEnumerable<double> values, string func)
+    {
+        var arr = values as double[] ?? values.ToArray();
+        if (arr.Length == 0) return 0;
+        switch (func.ToLowerInvariant())
+        {
+            case "sum": return arr.Sum();
+            case "count": return arr.Length;
+            case "countnums":
+            case "countnum": return arr.Length;
+            case "average":
+            case "avg": return arr.Average();
+            case "min": return arr.Min();
+            case "max": return arr.Max();
+            case "product":
+                double p = 1;
+                foreach (var v in arr) p *= v;
+                return p;
+            case "stddev":
+            case "std":
+            {
+                if (arr.Length < 2) return 0;
+                var mean = arr.Average();
+                var sq = arr.Sum(x => (x - mean) * (x - mean));
+                return Math.Sqrt(sq / (arr.Length - 1));
+            }
+            case "stddevp":
+            case "stdp":
+            {
+                var mean = arr.Average();
+                var sq = arr.Sum(x => (x - mean) * (x - mean));
+                return Math.Sqrt(sq / arr.Length);
+            }
+            case "var":
+            case "variance":
+            {
+                if (arr.Length < 2) return 0;
+                var mean = arr.Average();
+                var sq = arr.Sum(x => (x - mean) * (x - mean));
+                return sq / (arr.Length - 1);
+            }
+            case "varp":
+            {
+                var mean = arr.Average();
+                var sq = arr.Sum(x => (x - mean) * (x - mean));
+                return sq / arr.Length;
+            }
+            default: return arr.Sum();
+        }
     }
 
     private static (string col, int row) ParseCellRef(string cellRef)
