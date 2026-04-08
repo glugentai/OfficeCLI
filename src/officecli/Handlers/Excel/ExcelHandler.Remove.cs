@@ -68,10 +68,40 @@ public partial class ExcelHandler
             if (sheetCount <= 1)
                 throw new InvalidOperationException($"Cannot remove the last sheet. A workbook must contain at least one sheet.");
 
+            // R10-2: capture pivot cache definitions referenced by this
+            // sheet's pivot table parts BEFORE deleting the worksheet part,
+            // so we can prune any caches that become orphaned by the
+            // removal. Without this the workbook still carries pivotCaches
+            // entries + cache parts whose owning pivot is gone, which
+            // corrupts the file (Content_Types + workbook.xml.rels keep
+            // references to unreachable parts). Mirrors the cleanup done
+            // by the pivottable[N] branch below — both routes share the
+            // same orphan prune helper.
             var relId = sheet.Id?.Value;
+            var sheetWsPart = relId != null
+                ? workbookPart.GetPartById(relId) as WorksheetPart
+                : null;
+            var cachePartsTouched = sheetWsPart != null
+                ? sheetWsPart.PivotTableParts
+                    .Select(pp => pp.PivotTableCacheDefinitionPart)
+                    .Where(cp => cp != null)
+                    .Cast<PivotTableCacheDefinitionPart>()
+                    .Distinct()
+                    .ToList()
+                : new List<PivotTableCacheDefinitionPart>();
+
             sheet.Remove();
             if (relId != null)
                 workbookPart.DeletePart(workbookPart.GetPartById(relId));
+
+            // Prune orphan pivot caches now that the sheet (and its pivot
+            // table parts) are gone. PrunePivotCacheIfOrphan walks every
+            // remaining worksheet's pivot tables to confirm the cache is no
+            // longer referenced, then drops the workbook-level pivotCache
+            // entry and the cache part itself (which cascades to records,
+            // _rels, and Content_Types).
+            foreach (var cp in cachePartsTouched)
+                PrunePivotCacheIfOrphan(workbookPart, cp);
 
             // Clean up named ranges referencing the deleted sheet
             var workbook = GetWorkbook();
@@ -444,35 +474,9 @@ public partial class ExcelHandler
             // If no other pivot table references this cache, drop the cache
             // definition (and its records) plus the workbook-level PivotCache
             // registration. Otherwise leave it alone — shared caches are valid.
+            // Shared with the sheet-remove path above via PrunePivotCacheIfOrphan.
             if (cachePart != null)
-            {
-                var workbookPart = _doc.WorkbookPart!;
-                bool stillReferenced = workbookPart.WorksheetParts
-                    .SelectMany(ws => ws.PivotTableParts)
-                    .Any(pp => pp.PivotTableCacheDefinitionPart == cachePart);
-
-                if (!stillReferenced)
-                {
-                    // Locate and remove the <pivotCache> entry in workbook.xml
-                    // by matching the relationship id from WorkbookPart → cachePart.
-                    string? cacheRelId = null;
-                    try { cacheRelId = workbookPart.GetIdOfPart(cachePart); } catch { }
-
-                    var wb = GetWorkbook();
-                    var pivotCaches = wb.GetFirstChild<PivotCaches>();
-                    if (pivotCaches != null && cacheRelId != null)
-                    {
-                        var pcEntry = pivotCaches.Elements<PivotCache>()
-                            .FirstOrDefault(pc => pc.Id?.Value == cacheRelId);
-                        pcEntry?.Remove();
-                        if (!pivotCaches.HasChildren)
-                            pivotCaches.Remove();
-                    }
-
-                    try { workbookPart.DeletePart(cachePart); } catch { }
-                    wb.Save();
-                }
-            }
+                PrunePivotCacheIfOrphan(_doc.WorkbookPart!, cachePart);
 
             SaveWorksheet(worksheet);
             return null;
@@ -1190,5 +1194,45 @@ public partial class ExcelHandler
                 return $"{dollar1}{IndexToColumnName(colIdx - 1)}{dollar2}{row}";
             },
             RegexOptions.IgnoreCase);
+    }
+
+    /// <summary>
+    /// R10-2 / R2-1 shared helper. Drops a PivotTableCacheDefinitionPart and
+    /// its workbook-level &lt;pivotCache&gt; entry IF no remaining pivot
+    /// table part references it. Used by both the sheet-remove and the
+    /// pivottable[N]-remove code paths so the orphan-cleanup logic stays
+    /// in one place.
+    /// </summary>
+    private static void PrunePivotCacheIfOrphan(WorkbookPart workbookPart, PivotTableCacheDefinitionPart cachePart)
+    {
+        bool stillReferenced = workbookPart.WorksheetParts
+            .SelectMany(ws => ws.PivotTableParts)
+            .Any(pp => pp.PivotTableCacheDefinitionPart == cachePart);
+        if (stillReferenced) return;
+
+        // Locate and remove the <pivotCache> entry in workbook.xml by
+        // matching the relationship id from WorkbookPart → cachePart.
+        string? cacheRelId = null;
+        try { cacheRelId = workbookPart.GetIdOfPart(cachePart); } catch { }
+
+        var wb = workbookPart.Workbook;
+        if (wb != null)
+        {
+            var pivotCaches = wb.GetFirstChild<PivotCaches>();
+            if (pivotCaches != null && cacheRelId != null)
+            {
+                var pcEntry = pivotCaches.Elements<PivotCache>()
+                    .FirstOrDefault(pc => pc.Id?.Value == cacheRelId);
+                pcEntry?.Remove();
+                if (!pivotCaches.HasChildren)
+                    pivotCaches.Remove();
+            }
+            try { workbookPart.DeletePart(cachePart); } catch { }
+            wb.Save();
+        }
+        else
+        {
+            try { workbookPart.DeletePart(cachePart); } catch { }
+        }
     }
 }
