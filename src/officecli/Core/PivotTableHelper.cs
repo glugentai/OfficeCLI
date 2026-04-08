@@ -4051,11 +4051,13 @@ internal static class PivotTableHelper
         // therefore data must flow in the row dimension.
         if (rowFieldIndices.Count > 0)
         {
+            // Note: the synthetic <field x="-2"/> sentinel for multi-data labels
+            // belongs only on the column axis (default dataOnRows=false). The
+            // ColumnFields branch below unconditionally adds it when there are
+            // 2+ data fields, so we must NOT also add it here.
             var rf = new RowFields();
             foreach (var idx in rowFieldIndices)
                 rf.AppendChild(new Field { Index = idx });
-            if (valueFields.Count > 1 && colFieldIndices.Count == 0)
-                rf.AppendChild(new Field { Index = -2 });
             rf.Count = (uint)rf.Elements<Field>().Count();
             pivotDef.RowFields = rf;
         }
@@ -5340,15 +5342,13 @@ internal static class PivotTableHelper
         // RowFields
         if (rowFieldIndices.Count > 0)
         {
+            // The -2 sentinel belongs to the column axis only (dataOnRows=false
+            // is the default and we never flip it). ColumnFields below adds it
+            // unconditionally for valueFields.Count > 1, so do not duplicate
+            // it on the row axis.
             var rf = new RowFields { Count = (uint)rowFieldIndices.Count };
             foreach (var idx in rowFieldIndices)
                 rf.AppendChild(new Field { Index = idx });
-            // -2 sentinel for multiple value fields displayed in rows
-            if (valueFields.Count > 1 && colFieldIndices.Count == 0)
-            {
-                rf.AppendChild(new Field { Index = -2 });
-                rf.Count = (uint)rf.Elements<Field>().Count();
-            }
             pivotDef.RowFields = rf;
         }
         else
