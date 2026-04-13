@@ -230,6 +230,8 @@ public partial class ExcelHandler
         var legendColor = info.LegendFontColor ?? "#555";
         renderer.RenderLegendHtml(sb, info, legendColor);
 
+        renderer.RenderDataTableHtml(sb, info);
+
         sb.AppendLine("</div>");
     }
 

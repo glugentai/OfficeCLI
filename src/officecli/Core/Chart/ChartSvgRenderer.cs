@@ -273,60 +273,217 @@ internal partial class ChartSvgRenderer
     }
 
     public void RenderLineChartSvg(StringBuilder sb, List<(string name, double[] values)> series,
-        string[] categories, List<string> colors, int ox, int oy, int pw, int ph, bool showDataLabels = false)
+        string[] categories, List<string> colors, int ox, int oy, int pw, int ph,
+        bool showDataLabels = false, List<string>? markerShapes = null, List<int>? markerSizes = null,
+        double? logBase = null, bool isReversed = false,
+        bool hasDropLines = false, bool hasHighLowLines = false, bool hasUpDownBars = false,
+        string? upBarColor = null, string? downBarColor = null,
+        double? axisMin = null, double? axisMax = null, double? majorUnit = null, string? valNumFmt = null,
+        List<(string Name, double Value, string Color, double WidthPt, string Dash)>? referenceLines = null,
+        List<bool>? smooth = null, List<string>? lineDashes = null)
     {
         var allValues = series.SelectMany(s => s.values).ToArray();
         if (allValues.Length == 0) return;
-        var maxVal = allValues.Max();
-        if (maxVal <= 0) maxVal = 1;
+        var dataMax = allValues.Max();
+        var dataMin = allValues.Where(v => v > 0).DefaultIfEmpty(1).Min();
+        if (dataMax <= 0) dataMax = 1;
         var catCount = Math.Max(categories.Length, series.Max(s => s.values.Length));
-        var (niceMax, tickStep, nTicks) = ComputeNiceAxis(maxVal);
 
+        bool isLog = logBase.HasValue && logBase.Value > 1;
+
+        // Compute axis scale
+        double niceMax, niceMin, tickStep;
+        int nTicks;
+        if (isLog)
+        {
+            var logB = logBase!.Value;
+            niceMin = Math.Floor(Math.Log(dataMin) / Math.Log(logB));
+            niceMax = Math.Ceiling(Math.Log(dataMax) / Math.Log(logB));
+            if (niceMin >= niceMax) niceMax = niceMin + 1;
+            nTicks = (int)(niceMax - niceMin);
+            tickStep = 1;
+        }
+        else
+        {
+            var computeMax = axisMax ?? dataMax;
+            (niceMax, tickStep, nTicks) = ComputeNiceAxis(computeMax);
+            if (axisMax.HasValue) niceMax = axisMax.Value;
+            niceMin = axisMin ?? 0;
+            if (majorUnit.HasValue && majorUnit.Value > 0)
+            {
+                tickStep = majorUnit.Value;
+                nTicks = (int)Math.Ceiling((niceMax - niceMin) / tickStep);
+            }
+        }
+
+        // Value-to-Y mapping
+        double MapY(double val)
+        {
+            double ratio;
+            if (isLog)
+            {
+                var logB = logBase!.Value;
+                var logVal = val > 0 ? Math.Log(val) / Math.Log(logB) : niceMin;
+                ratio = (logVal - niceMin) / (niceMax - niceMin);
+            }
+            else
+            {
+                ratio = (niceMax - niceMin) > 0 ? (val - niceMin) / (niceMax - niceMin) : 0;
+            }
+            ratio = Math.Max(0, Math.Min(1, ratio));
+            return isReversed ? oy + ratio * ph : oy + ph - ratio * ph;
+        }
+
+        // Gridlines
         for (int t = 1; t <= nTicks; t++)
         {
-            var gy = oy + ph - (double)ph * t / nTicks;
+            double tickVal = isLog ? niceMin + t : niceMin + tickStep * t;
+            var gy = MapY(isLog ? Math.Pow(logBase!.Value, tickVal) : tickVal);
             sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{gy:0.#}\" x2=\"{ox + pw}\" y2=\"{gy:0.#}\" stroke=\"{GridColor}\" stroke-width=\"0.5\" stroke-dasharray=\"none\"/>");
         }
         sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{oy}\" x2=\"{ox}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
         sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{oy + ph}\" x2=\"{ox + pw}\" y2=\"{oy + ph}\" stroke=\"{AxisLineColor}\" stroke-width=\"1\"/>");
 
+        // Compute all point coordinates first (needed for high-low/up-down)
+        var allPoints = new List<List<(double x, double y, double val)>>();
         for (int s = 0; s < series.Count; s++)
         {
-            var points = new List<string>();
+            var pts = new List<(double x, double y, double val)>();
             for (int c = 0; c < series[s].values.Length && c < catCount; c++)
             {
                 var px = ox + (catCount > 1 ? (double)pw * c / (catCount - 1) : pw / 2.0);
-                var py = oy + ph - (series[s].values[c] / niceMax) * ph;
-                points.Add($"{px:0.#},{py:0.#}");
+                var py = MapY(series[s].values[c]);
+                pts.Add((px, py, series[s].values[c]));
             }
-            if (points.Count > 0)
+            allPoints.Add(pts);
+        }
+
+        // High-low lines (vertical line from highest to lowest value at each category)
+        if (hasHighLowLines && series.Count >= 2)
+        {
+            for (int c = 0; c < catCount; c++)
             {
-                var lineColor = colors[s % colors.Count];
-                sb.AppendLine($"        <polyline points=\"{string.Join(" ", points)}\" fill=\"none\" stroke=\"{lineColor}\" stroke-width=\"2\"/>");
-                for (int p = 0; p < points.Count; p++)
+                var yVals = allPoints.Where(p => c < p.Count).Select(p => p[c].y).ToArray();
+                if (yVals.Length >= 2)
                 {
-                    var parts = points[p].Split(',');
-                    sb.AppendLine($"        <circle cx=\"{parts[0]}\" cy=\"{parts[1]}\" r=\"3\" fill=\"{lineColor}\"/>");
-                    if (showDataLabels)
-                    {
-                        var val = series[s].values[p];
-                        var vlabel = val % 1 == 0 ? $"{(int)val}" : $"{val:0.#}";
-                        sb.AppendLine($"        <text x=\"{parts[0]}\" y=\"{double.Parse(parts[1]) - 6:0.#}\" fill=\"{ValueColor}\" font-size=\"{DataLabelFontPx}\" text-anchor=\"middle\">{vlabel}</text>");
-                    }
+                    var px = allPoints[0][c].x;
+                    sb.AppendLine($"        <line x1=\"{px:0.#}\" y1=\"{yVals.Min():0.#}\" x2=\"{px:0.#}\" y2=\"{yVals.Max():0.#}\" stroke=\"#666\" stroke-width=\"1\"/>");
                 }
             }
         }
+
+        // Up-down bars (between first and last series at each category)
+        if (hasUpDownBars && series.Count >= 2)
+        {
+            var barW = Math.Max(4, pw / catCount * 0.4);
+            for (int c = 0; c < catCount; c++)
+            {
+                if (c >= allPoints[0].Count || c >= allPoints[^1].Count) continue;
+                var first = allPoints[0][c];
+                var last = allPoints[^1][c];
+                var isUp = first.val <= last.val;
+                var color = isUp ? (upBarColor ?? "4CAF50") : (downBarColor ?? "F44336");
+                if (!color.StartsWith("#")) color = "#" + color;
+                var topY = Math.Min(first.y, last.y);
+                var botY = Math.Max(first.y, last.y);
+                var h = Math.Max(1, botY - topY);
+                sb.AppendLine($"        <rect x=\"{first.x - barW / 2:0.#}\" y=\"{topY:0.#}\" width=\"{barW:0.#}\" height=\"{h:0.#}\" fill=\"{color}\" stroke=\"#333\" stroke-width=\"0.5\"/>");
+            }
+        }
+
+        // Draw lines and markers
+        for (int s = 0; s < series.Count; s++)
+        {
+            var pts = allPoints[s];
+            if (pts.Count == 0) continue;
+            var lineColor = colors[s % colors.Count];
+            var isSmooth = smooth != null && s < smooth.Count && smooth[s];
+            var dashName = lineDashes != null && s < lineDashes.Count ? lineDashes[s] : "solid";
+            var dashAttr = dashName != "solid" ? $" stroke-dasharray=\"{RefLineDashArray(dashName)}\"" : "";
+
+            if (isSmooth && pts.Count >= 2)
+            {
+                // Catmull-Rom to cubic Bezier smooth path
+                var d = new StringBuilder();
+                d.Append($"M{pts[0].x:0.#},{pts[0].y:0.#}");
+                for (int i = 0; i < pts.Count - 1; i++)
+                {
+                    var p0 = i > 0 ? pts[i - 1] : pts[i];
+                    var p1 = pts[i];
+                    var p2 = pts[i + 1];
+                    var p3 = i + 2 < pts.Count ? pts[i + 2] : pts[i + 1];
+                    var cp1x = p1.x + (p2.x - p0.x) / 6.0;
+                    var cp1y = p1.y + (p2.y - p0.y) / 6.0;
+                    var cp2x = p2.x - (p3.x - p1.x) / 6.0;
+                    var cp2y = p2.y - (p3.y - p1.y) / 6.0;
+                    d.Append($" C{cp1x:0.#},{cp1y:0.#} {cp2x:0.#},{cp2y:0.#} {p2.x:0.#},{p2.y:0.#}");
+                }
+                sb.AppendLine($"        <path d=\"{d}\" fill=\"none\" stroke=\"{lineColor}\" stroke-width=\"2\"{dashAttr}/>");
+            }
+            else
+            {
+                var pointStr = string.Join(" ", pts.Select(p => $"{p.x:0.#},{p.y:0.#}"));
+                sb.AppendLine($"        <polyline points=\"{pointStr}\" fill=\"none\" stroke=\"{lineColor}\" stroke-width=\"2\"{dashAttr}/>");
+            }
+
+            // Drop lines (vertical from each data point down to X axis)
+            if (hasDropLines)
+            {
+                var baseY = isReversed ? oy : oy + ph;
+                foreach (var pt in pts)
+                    sb.AppendLine($"        <line x1=\"{pt.x:0.#}\" y1=\"{pt.y:0.#}\" x2=\"{pt.x:0.#}\" y2=\"{baseY}\" stroke=\"#888\" stroke-width=\"0.7\" stroke-dasharray=\"3,2\"/>");
+            }
+
+            var shape = markerShapes != null && s < markerShapes.Count ? markerShapes[s] : "circle";
+            var mSize = markerSizes != null && s < markerSizes.Count ? markerSizes[s] * 0.6 : 3;
+            for (int p = 0; p < pts.Count; p++)
+            {
+                sb.AppendLine($"        {RenderMarkerSvg(shape, pts[p].x, pts[p].y, mSize, lineColor)}");
+                if (showDataLabels)
+                {
+                    var val = pts[p].val;
+                    var vlabel = val % 1 == 0 ? $"{(int)val}" : $"{val:0.#}";
+                    sb.AppendLine($"        <text x=\"{pts[p].x:0.#}\" y=\"{pts[p].y - 6:0.#}\" fill=\"{ValueColor}\" font-size=\"{DataLabelFontPx}\" text-anchor=\"middle\">{vlabel}</text>");
+                }
+            }
+        }
+
+        // Reference lines
+        if (referenceLines != null)
+        {
+            foreach (var rl in referenceLines)
+            {
+                var ry = MapY(rl.Value);
+                var dashArr = RefLineDashArray(rl.Dash);
+                sb.AppendLine($"        <line x1=\"{ox}\" y1=\"{ry:0.#}\" x2=\"{ox + pw}\" y2=\"{ry:0.#}\" stroke=\"{rl.Color}\" stroke-width=\"{rl.WidthPt:0.#}\" stroke-dasharray=\"{dashArr}\"/>");
+            }
+        }
+
+        // Category labels
         for (int c = 0; c < catCount; c++)
         {
             var label = c < categories.Length ? categories[c] : "";
             var lx = ox + (catCount > 1 ? (double)pw * c / (catCount - 1) : pw / 2.0);
             sb.AppendLine($"        <text x=\"{lx:0.#}\" y=\"{oy + ph + 16}\" fill=\"{CatColor}\" font-size=\"{CatFontPx}\" text-anchor=\"middle\">{HtmlEncode(label)}</text>");
         }
+
+        // Value axis labels
         for (int t = 0; t <= nTicks; t++)
         {
-            var val = tickStep * t;
-            var label = val % 1 == 0 ? $"{(int)val}" : $"{val:0.#}";
-            var ty = oy + ph - (double)ph * t / nTicks;
+            double tickVal;
+            string label;
+            if (isLog)
+            {
+                var exp = niceMin + t;
+                tickVal = Math.Pow(logBase!.Value, exp);
+                label = FormatAxisValue(tickVal, valNumFmt);
+            }
+            else
+            {
+                tickVal = niceMin + tickStep * t;
+                label = FormatAxisValue(tickVal, valNumFmt);
+            }
+            var ty = MapY(tickVal);
             sb.AppendLine($"        <text x=\"{ox - 4}\" y=\"{ty:0.#}\" fill=\"{AxisColor}\" font-size=\"{ValFontPx}\" text-anchor=\"end\" dominant-baseline=\"middle\">{label}</text>");
         }
     }
@@ -973,6 +1130,30 @@ internal partial class ChartSvgRenderer
         /// <summary>Reference-line overlays (horizontal dashed lines at constant values).
         /// Filled by ExtractChartInfo from any ref-line-only LineChart in the plot area.</summary>
         public List<(string Name, double Value, string Color, double WidthPt, string Dash)> ReferenceLines { get; set; } = [];
+
+        // --- Marker shapes per series (circle, diamond, square, triangle, star, x, plus, dash, dot, none) ---
+        public List<string> MarkerShapes { get; set; } = [];
+        public List<int> MarkerSizes { get; set; } = [];
+
+        // --- Smooth line (cubic spline) per series ---
+        public List<bool> Smooth { get; set; } = [];
+
+        // --- Dash pattern per series (solid, dash, dot, dashDot, lgDash, etc.) ---
+        public List<string> LineDashes { get; set; } = [];
+
+        // --- Axis features ---
+        public double? LogBase { get; set; }
+        public bool IsReversed { get; set; }
+
+        // --- Line elements ---
+        public bool HasDropLines { get; set; }
+        public bool HasHighLowLines { get; set; }
+        public bool HasUpDownBars { get; set; }
+        public string? UpBarColor { get; set; }
+        public string? DownBarColor { get; set; }
+
+        // --- Data table ---
+        public bool HasDataTable { get; set; }
     }
 
     /// <summary>
@@ -1089,6 +1270,16 @@ internal partial class ChartSvgRenderer
             if (majorUnit != null && double.TryParse(majorUnit.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value, out var mu))
                 info.MajorUnit = mu;
 
+            // Log scale
+            var logBaseEl = scaling?.Elements().FirstOrDefault(e => e.LocalName == "logBase");
+            if (logBaseEl != null && double.TryParse(logBaseEl.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value, out var lb))
+                info.LogBase = lb;
+
+            // Axis orientation (reversed)
+            var orientEl = scaling?.Elements().FirstOrDefault(e => e.LocalName == "orientation");
+            var orientVal = orientEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+            info.IsReversed = orientVal == "maxMin";
+
             // Use txPr > defRPr for tick label font (not title's RunProperties)
             var valTxPr = valAxis.Elements().FirstOrDefault(e => e.LocalName == "txPr");
             var valDefRPr = valTxPr?.Descendants<Drawing.DefaultRunProperties>().FirstOrDefault();
@@ -1169,6 +1360,59 @@ internal partial class ChartSvgRenderer
         {
             info.HasLegend = info.Series.Count > 1 || isPieType || info.ReferenceLines.Count > 0;
         }
+
+        // Marker shapes, smooth, and dash per series
+        if (chartTypeEl != null)
+        {
+            // Chart-level smooth (lineChart > smooth val="1")
+            var chartSmooth = chartTypeEl.Elements().FirstOrDefault(e => e.LocalName == "smooth");
+            var chartSmoothVal = chartSmooth?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+            var chartIsSmooth = chartSmoothVal == "1" || chartSmoothVal == "true";
+
+            foreach (var ser in serElements)
+            {
+                var marker = ser.Elements().FirstOrDefault(e => e.LocalName == "marker");
+                var symbol = marker?.Elements().FirstOrDefault(e => e.LocalName == "symbol");
+                var symbolVal = symbol?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value ?? "circle";
+                info.MarkerShapes.Add(symbolVal);
+                var sizeEl = marker?.Elements().FirstOrDefault(e => e.LocalName == "size");
+                var sizeVal = sizeEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+                info.MarkerSizes.Add(sizeVal != null && int.TryParse(sizeVal, out var ms) ? ms : 5);
+
+                // Per-series smooth (overrides chart-level)
+                var serSmooth = ser.Elements().FirstOrDefault(e => e.LocalName == "smooth");
+                var serSmoothVal = serSmooth?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+                info.Smooth.Add(serSmooth != null
+                    ? (serSmoothVal == "1" || serSmoothVal == "true")
+                    : chartIsSmooth);
+
+                // Per-series dash pattern
+                var spPr = ser.Elements().FirstOrDefault(e => e.LocalName == "spPr");
+                var ln = spPr?.Elements().FirstOrDefault(e => e.LocalName == "ln");
+                var prstDash = ln?.Elements().FirstOrDefault(e => e.LocalName == "prstDash");
+                var dashVal = prstDash?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+                info.LineDashes.Add(dashVal ?? "solid");
+            }
+
+            // Line elements: dropLines, hiLowLines, upDownBars
+            info.HasDropLines = chartTypeEl.Elements().Any(e => e.LocalName == "dropLines");
+            info.HasHighLowLines = chartTypeEl.Elements().Any(e => e.LocalName == "hiLowLines");
+            var upDownBars = chartTypeEl.Elements().FirstOrDefault(e => e.LocalName == "upDownBars");
+            info.HasUpDownBars = upDownBars != null;
+            if (upDownBars != null)
+            {
+                var upSpPr = upDownBars.Elements().FirstOrDefault(e => e.LocalName == "upBars")
+                    ?.Elements().FirstOrDefault(e => e.LocalName == "spPr");
+                var dnSpPr = upDownBars.Elements().FirstOrDefault(e => e.LocalName == "downBars")
+                    ?.Elements().FirstOrDefault(e => e.LocalName == "spPr");
+                info.UpBarColor = ExtractFillColor(upSpPr) ?? "4CAF50";
+                info.DownBarColor = ExtractFillColor(dnSpPr) ?? "F44336";
+            }
+        }
+
+        // Data table
+        var dataTableEl = chart?.Descendants().FirstOrDefault(e => e.LocalName == "dTable");
+        info.HasDataTable = dataTableEl != null;
 
         return info;
     }
@@ -1324,7 +1568,11 @@ internal partial class ChartSvgRenderer
             if (info.Is3D)
                 RenderLine3DSvg(sb, info.Series, info.Categories, info.Colors, marginLeft, marginTop, plotW, plotH);
             else
-                RenderLineChartSvg(sb, info.Series, info.Categories, info.Colors, marginLeft, marginTop, plotW, plotH, info.ShowDataLabels);
+                RenderLineChartSvg(sb, info.Series, info.Categories, info.Colors, marginLeft, marginTop, plotW, plotH,
+                    info.ShowDataLabels, info.MarkerShapes, info.MarkerSizes, info.LogBase, info.IsReversed,
+                    info.HasDropLines, info.HasHighLowLines, info.HasUpDownBars,
+                    info.UpBarColor, info.DownBarColor, info.AxisMin, info.AxisMax, info.MajorUnit, info.ValNumFmt,
+                    info.ReferenceLines, info.Smooth, info.LineDashes);
         }
         else
         {
@@ -1389,6 +1637,34 @@ internal partial class ChartSvgRenderer
         sb.AppendLine("</div>");
     }
 
+    /// <summary>Render a data table below the chart (HTML table showing raw series values).</summary>
+    public void RenderDataTableHtml(StringBuilder sb, ChartInfo info)
+    {
+        if (!info.HasDataTable) return;
+        sb.AppendLine("  <div style=\"overflow-x:auto;padding:0 4px\">");
+        sb.AppendLine("  <table style=\"width:100%;border-collapse:collapse;font-size:7pt;color:#555;margin-top:2px\">");
+        // Header row: categories
+        sb.Append("    <tr><td style=\"border:1px solid #ccc;padding:1px 3px\"></td>");
+        foreach (var cat in info.Categories)
+            sb.Append($"<td style=\"border:1px solid #ccc;padding:1px 3px;text-align:center;font-weight:bold\">{HtmlEncode(cat)}</td>");
+        sb.AppendLine("</tr>");
+        // Series rows
+        for (int s = 0; s < info.Series.Count; s++)
+        {
+            var color = s < info.Colors.Count ? info.Colors[s] : DefaultColors[s % DefaultColors.Length];
+            sb.Append($"    <tr><td style=\"border:1px solid #ccc;padding:1px 3px;font-weight:bold;color:{color}\">{HtmlEncode(info.Series[s].name)}</td>");
+            for (int c = 0; c < info.Categories.Length; c++)
+            {
+                var val = c < info.Series[s].values.Length ? info.Series[s].values[c] : 0;
+                var label = val % 1 == 0 ? $"{(int)val}" : $"{val:0.#}";
+                sb.Append($"<td style=\"border:1px solid #ccc;padding:1px 3px;text-align:center\">{label}</td>");
+            }
+            sb.AppendLine("</tr>");
+        }
+        sb.AppendLine("  </table>");
+        sb.AppendLine("  </div>");
+    }
+
     // ==================== Reference Line Helpers ====================
 
     /// <summary>Map an OOXML PresetLineDashValues InnerText (e.g. "sysDash", "lgDashDot") to
@@ -1408,6 +1684,37 @@ internal partial class ChartSvgRenderer
     // ==================== 3D Chart Helpers ====================
 
     /// <summary>Darken or lighten a hex color by a factor (0.0-2.0, 1.0=unchanged)</summary>
+    private static string RenderMarkerSvg(string shape, double cx, double cy, double r, string color)
+    {
+        return shape switch
+        {
+            "diamond" => $"<polygon points=\"{cx},{cy - r} {cx + r},{cy} {cx},{cy + r} {cx - r},{cy}\" fill=\"{color}\"/>",
+            "square" => $"<rect x=\"{cx - r}\" y=\"{cy - r}\" width=\"{r * 2}\" height=\"{r * 2}\" fill=\"{color}\"/>",
+            "triangle" => $"<polygon points=\"{cx},{cy - r} {cx + r},{cy + r} {cx - r},{cy + r}\" fill=\"{color}\"/>",
+            "star" => BuildStarPath(cx, cy, r, color),
+            "x" => $"<g stroke=\"{color}\" stroke-width=\"1.5\"><line x1=\"{cx - r}\" y1=\"{cy - r}\" x2=\"{cx + r}\" y2=\"{cy + r}\"/><line x1=\"{cx + r}\" y1=\"{cy - r}\" x2=\"{cx - r}\" y2=\"{cy + r}\"/></g>",
+            "plus" => $"<g stroke=\"{color}\" stroke-width=\"1.5\"><line x1=\"{cx}\" y1=\"{cy - r}\" x2=\"{cx}\" y2=\"{cy + r}\"/><line x1=\"{cx - r}\" y1=\"{cy}\" x2=\"{cx + r}\" y2=\"{cy}\"/></g>",
+            "dash" => $"<line x1=\"{cx - r}\" y1=\"{cy}\" x2=\"{cx + r}\" y2=\"{cy}\" stroke=\"{color}\" stroke-width=\"2\"/>",
+            "dot" => $"<circle cx=\"{cx}\" cy=\"{cy}\" r=\"1.5\" fill=\"{color}\"/>",
+            "none" => "",
+            _ => $"<circle cx=\"{cx}\" cy=\"{cy}\" r=\"{r}\" fill=\"{color}\"/>", // circle or auto
+        };
+    }
+
+    private static string BuildStarPath(double cx, double cy, double r, string color)
+    {
+        var sb = new StringBuilder();
+        sb.Append($"<polygon points=\"");
+        for (int i = 0; i < 10; i++)
+        {
+            var angle = Math.PI / 2 + i * Math.PI / 5;
+            var rad = i % 2 == 0 ? r : r * 0.4;
+            sb.Append($"{cx + rad * Math.Cos(angle):0.#},{cy - rad * Math.Sin(angle):0.#} ");
+        }
+        sb.Append($"\" fill=\"{color}\"/>");
+        return sb.ToString();
+    }
+
     private static string AdjustColor(string hexColor, double factor)
     {
         var hex = hexColor.TrimStart('#');

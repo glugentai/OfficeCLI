@@ -76,6 +76,26 @@ internal static partial class ChartHelper
                 chartElement = BuildBarChart(C.BarDirectionValues.Column, stacked, percentStacked,
                     categories, seriesData, catAxisId, valAxisId, colors);
                 break;
+            case "line" when is3D:
+            {
+                var grouping3d = percentStacked ? C.GroupingValues.PercentStacked
+                    : stacked ? C.GroupingValues.Stacked
+                    : C.GroupingValues.Standard;
+                var line3d = new C.Line3DChart(
+                    new C.Grouping { Val = grouping3d },
+                    new C.VaryColors { Val = false }
+                );
+                for (int i = 0; i < seriesData.Count; i++)
+                {
+                    var color = colors != null && i < colors.Length ? colors[i] : DefaultSeriesColors[i % DefaultSeriesColors.Length];
+                    line3d.AppendChild(BuildLineSeries((uint)i, seriesData[i].name,
+                        categories, seriesData[i].values, color));
+                }
+                line3d.AppendChild(new C.AxisId { Val = catAxisId });
+                line3d.AppendChild(new C.AxisId { Val = valAxisId });
+                chartElement = line3d;
+                break;
+            }
             case "line":
                 chartElement = BuildLineChart(stacked, percentStacked,
                     categories, seriesData, catAxisId, valAxisId, colors);
@@ -84,6 +104,21 @@ internal static partial class ChartHelper
                 chartElement = BuildAreaChart(stacked, percentStacked,
                     categories, seriesData, catAxisId, valAxisId, colors);
                 break;
+            case "pie" when is3D:
+            {
+                var pie3d = new C.Pie3DChart(
+                    new C.VaryColors { Val = true }
+                );
+                for (int i = 0; i < seriesData.Count; i++)
+                {
+                    var color = colors != null && i < colors.Length ? colors[i] : DefaultSeriesColors[i % DefaultSeriesColors.Length];
+                    pie3d.AppendChild(BuildPieSeries((uint)i, seriesData[i].name,
+                        categories, seriesData[i].values, color));
+                }
+                chartElement = pie3d;
+                needsAxes = false;
+                break;
+            }
             case "pie":
                 chartElement = BuildPieChart(categories, seriesData, colors);
                 needsAxes = false;
