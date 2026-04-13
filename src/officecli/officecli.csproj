@@ -39,6 +39,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="../../skills/**/*" LogicalName="skills/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Remove="../../skills/**/*.glb" />
   </ItemGroup>
 
   <ItemGroup>
