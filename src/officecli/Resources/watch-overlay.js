@@ -27,6 +27,39 @@
                 var sel = '[data-path="' + path.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]';
                 document.querySelectorAll(sel).forEach(function(el) {
                     el.classList.add('officecli-selected');
+                    // Excel row header: also highlight all data cells in the same <tr>
+                    var rowMatch = path.match(/^(\/[^/]+)\/row\[(\d+)\]$/);
+                    if (rowMatch && el.tagName === 'TH') {
+                        var tr = el.closest('tr');
+                        if (tr) tr.querySelectorAll('td[data-path]').forEach(function(td) {
+                            td.classList.add('officecli-selected');
+                        });
+                    }
+                    // Excel column header: highlight all cells in that column
+                    var colMatch = path.match(/^(\/[^/]+)\/col\[([A-Za-z]+)\]$/);
+                    if (colMatch && el.tagName === 'TH') {
+                        var sheet = colMatch[1], col = colMatch[2];
+                        // Match cells whose data-path is /{sheet}/{Col}{digits}
+                        var re = new RegExp('^' + sheet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/' + col + '\\d+$', 'i');
+                        document.querySelectorAll('td[data-path]').forEach(function(td) {
+                            if (re.test(td.getAttribute('data-path'))) {
+                                td.classList.add('officecli-selected');
+                            }
+                        });
+                    }
+                    // Excel cell: also highlight the corresponding row header and col header (crosshair)
+                    var cellMatch = path.match(/^(\/[^/]+)\/([A-Za-z]+)(\d+)$/);
+                    if (cellMatch && el.tagName === 'TD') {
+                        var sheet = cellMatch[1], col = cellMatch[2], row = cellMatch[3];
+                        var rowSel = '[data-path="' + (sheet + '/row[' + row + ']').replace(/"/g, '\\"') + '"]';
+                        document.querySelectorAll(rowSel).forEach(function(th) {
+                            th.classList.add('officecli-selected');
+                        });
+                        var colSel = '[data-path="' + (sheet + '/col[' + col + ']').replace(/"/g, '\\"') + '"]';
+                        document.querySelectorAll(colSel).forEach(function(th) {
+                            th.classList.add('officecli-selected');
+                        });
+                    }
                 });
             } catch (e) {}
         });
