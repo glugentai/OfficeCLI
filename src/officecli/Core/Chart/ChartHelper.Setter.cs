@@ -178,11 +178,36 @@ internal static partial class ChartHelper
                         {
                             var dl = new C.DataLabels();
                             var parts = value.ToLowerInvariant().Split(',').Select(s => s.Trim()).ToHashSet();
+                            // Position values (outsideEnd, center, insideEnd, insideBase, top, bottom, left, right)
+                            // implicitly enable showVal when used as the dataLabels value
+                            var positionValues = new HashSet<string> { "outsideend", "center", "insideend", "insidebase",
+                                "top", "bottom", "left", "right", "bestfit", "t", "b", "l", "r", "outend", "ctr" };
+                            var isPositionValue = parts.Any(p => positionValues.Contains(p));
+                            var showVal = parts.Contains("value") || parts.Contains("true") || parts.Contains("all") || isPositionValue;
                             dl.AppendChild(new C.ShowLegendKey { Val = false });
-                            dl.AppendChild(new C.ShowValue { Val = parts.Contains("value") || parts.Contains("true") || parts.Contains("all") });
+                            dl.AppendChild(new C.ShowValue { Val = showVal });
                             dl.AppendChild(new C.ShowCategoryName { Val = parts.Contains("category") || parts.Contains("all") });
                             dl.AppendChild(new C.ShowSeriesName { Val = parts.Contains("series") || parts.Contains("all") });
                             dl.AppendChild(new C.ShowPercent { Val = parts.Contains("percent") || parts.Contains("all") });
+                            // If a position value was given, apply it as dLblPos
+                            if (isPositionValue)
+                            {
+                                var posVal = parts.First(p => positionValues.Contains(p));
+                                var dLblPos = posVal switch
+                                {
+                                    "outsideend" or "outend" => C.DataLabelPositionValues.OutsideEnd,
+                                    "insideend" => C.DataLabelPositionValues.InsideEnd,
+                                    "insidebase" => C.DataLabelPositionValues.InsideBase,
+                                    "center" or "ctr" => C.DataLabelPositionValues.Center,
+                                    "top" or "t" => C.DataLabelPositionValues.Top,
+                                    "bottom" or "b" => C.DataLabelPositionValues.Bottom,
+                                    "left" or "l" => C.DataLabelPositionValues.Left,
+                                    "right" or "r" => C.DataLabelPositionValues.Right,
+                                    "bestfit" => C.DataLabelPositionValues.BestFit,
+                                    _ => C.DataLabelPositionValues.OutsideEnd
+                                };
+                                dl.AppendChild(new C.DataLabelPosition { Val = dLblPos });
+                            }
                             // Insert dLbls before gapWidth/overlap/showMarker/holeSize/axId per schema order
                             var dlInsertBefore = chartTypeEl.GetFirstChild<C.GapWidth>() as OpenXmlElement
                                 ?? chartTypeEl.GetFirstChild<C.Overlap>() as OpenXmlElement
