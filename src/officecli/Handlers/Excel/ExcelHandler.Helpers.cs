@@ -909,9 +909,22 @@ public partial class ExcelHandler
     private static (int Rank, double NumVal, string StrVal) ParseSortValue(string value)
     {
         if (string.IsNullOrEmpty(value)) return (2, 0.0, "");
+        // Excel treats NaN / Infinity / -Infinity as text, not numbers. double.TryParse
+        // happily accepts them though, which would make sort order dependent on whether
+        // the exact casing matched double.TryParse's spec vs not — classify explicitly.
+        if (value.Equals("NaN", StringComparison.Ordinal)
+            || value.Equals("Infinity", StringComparison.Ordinal)
+            || value.Equals("-Infinity", StringComparison.Ordinal)
+            || value.Equals("+Infinity", StringComparison.Ordinal))
+            return (1, 0.0, value);
         if (double.TryParse(value, System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out var num))
+        {
+            // Defensive: even non-literal inputs can produce non-finite doubles
+            // (e.g. "1e999" overflows to +Infinity). Keep those in the string bucket.
+            if (!double.IsFinite(num)) return (1, 0.0, value);
             return (0, num, "");
+        }
         return (1, 0.0, value);
     }
 
