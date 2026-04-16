@@ -1331,9 +1331,14 @@ public partial class WordHandler
         var style = val switch
         {
             "single" => "solid",
+            "thick" => "solid",
             "double" => "double",
+            "triple" => "double",  // CSS has no 3-line; double is closest
             "dashed" or "dashSmallGap" => "dashed",
+            "dashDotStroked" or "dashDotHeavy" => "dashed",
             "dotted" => "dotted",
+            "dotDash" or "dotDotDash" => "dashed",
+            "wave" or "doubleWave" => "solid",  // CSS has no wave border
             _ => "solid"
         };
         // OOXML border sz is in 1/8 of a point (8 = 1pt, 24 = 3pt, etc.)

@@ -336,7 +336,9 @@ public partial class WordHandler
                         var curPos = orderedStops[tabIdx].Position!.Value / 20.0; // twips → pt
                         var prevPos = tabIdx > 0 ? orderedStops[tabIdx - 1].Position!.Value / 20.0 : 0;
                         widthPt = curPos - prevPos;
-                        // Handle tab leader (dot, middleDot, hyphen, underscore) for positional tabs
+                        // Handle tab leader for positional tabs. OOXML values:
+                        //   none, dot, hyphen, underscore, heavy, middleDot (spec)
+                        //   some authors also emit "dash" as a hyphen alias.
                         var leader = orderedStops[tabIdx].Leader?.InnerText;
                         var cssLeader = leader switch
                         {
@@ -345,8 +347,8 @@ public partial class WordHandler
                             // thicker dotted border with larger spacing; browsers render dotted
                             // borders with square dots which read as middle dots at 2px width.
                             "middleDot" => "border-bottom:2px dotted #555;",
-                            "hyphen" => "border-bottom:1px dashed #000;",
-                            "underscore" => "border-bottom:1px solid #000;",
+                            "hyphen" or "dash" => "border-bottom:1px dashed #000;",
+                            "underscore" or "heavy" => "border-bottom:1px solid #000;",
                             _ => "",
                         };
                         sb.Append($"<span style=\"display:inline-block;width:{widthPt:0.##}pt;{cssLeader}\"></span>");
