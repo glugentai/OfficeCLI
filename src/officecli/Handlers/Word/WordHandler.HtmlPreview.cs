@@ -998,15 +998,6 @@ public partial class WordHandler
                         pendingLiClose = false;
                     }
 
-                    // Build <ol>/<ul> attributes: type, start, indentation
-                    var olType = numFmt switch
-                    {
-                        "lowerLetter" => " type=\"a\"",
-                        "upperLetter" => " type=\"A\"",
-                        "lowerRoman" => " type=\"i\"",
-                        "upperRoman" => " type=\"I\"",
-                        _ => ""
-                    };
                     // Get indentation from numbering level definition
                     var (lvlLeft, lvlHanging) = GetListLevelIndentFull(numId, ilvl);
                     var parentLeft = ilvl > 0 ? GetListLevelIndent(numId, ilvl - 1) : 0;
@@ -1024,7 +1015,12 @@ public partial class WordHandler
                     if (indentPt < 18) indentPt = 18; // minimum indent
                     var hangingPt = lvlHanging / 20.0;
                     var listStyleParts = $"padding-left:{indentPt:0.#}pt;margin:0";
-                    if (isMultiLevel) listStyleParts += ";list-style-type:none";
+                    // CONSISTENCY(list-marker): every ordered list is rendered with
+                    // list-style-type:none and a computed marker <span>. This lets
+                    // WordNumFmtRenderer handle numFmt variants (chineseCounting,
+                    // decimalZero, …) plus lvlText/suff/lvlJc that CSS `<ol type>`
+                    // cannot express. See KNOWN_ISSUES.md #4.
+                    if (tag == "ol") listStyleParts += ";list-style-type:none";
                     if (picBulletUri != null)
                         listStyleParts += $";list-style-image:url('{picBulletUri}')";
                     else if (tag == "ul")
@@ -1041,43 +1037,42 @@ public partial class WordHandler
                     }
                     var indentStyle = $" style=\"{listStyleParts}\"";
 
+                    // Seed per-level counter from startOverride / level start
+                    // when we're opening this level for the first time in the
+                    // current list. Cross-list (different numId) continuation is
+                    // preserved via olCountPerLevel survival.
+                    int SeedStart(int forIlvl)
+                    {
+                        if (olCountPerLevel.TryGetValue(forIlvl, out var prev) && prev > 0)
+                            return prev; // continuation
+                        return (GetStartValue(numId, forIlvl) ?? 1) - 1;
+                    }
+
                     while (listStack.Count < ilvl + 1)
                     {
-                        if (tag == "ol")
-                        {
-                            var startAttr = "";
-                            if (olCountPerLevel.TryGetValue(ilvl, out var prevCount) && prevCount > 0)
-                                startAttr = $" start=\"{prevCount + 1}\"";
-                            sb.AppendLine($"<{tag}{olType}{startAttr}{indentStyle}>");
-                        }
-                        else
-                            sb.AppendLine($"<{tag}{indentStyle}>");
+                        sb.AppendLine($"<{tag}{indentStyle}>");
                         listStack.Push(tag);
                     }
                     // If same level but different list type, swap
                     if (listStack.Count > 0 && listStack.Peek() != tag)
                     {
                         sb.AppendLine($"</{listStack.Pop()}>");
-                        if (tag == "ol")
-                        {
-                            var startAttr = "";
-                            if (olCountPerLevel.TryGetValue(ilvl, out var pc) && pc > 0)
-                                startAttr = $" start=\"{pc + 1}\"";
-                            sb.AppendLine($"<{tag}{olType}{startAttr}{indentStyle}>");
-                        }
-                        else
-                            sb.AppendLine($"<{tag}{indentStyle}>");
+                        sb.AppendLine($"<{tag}{indentStyle}>");
                         listStack.Push(tag);
                     }
 
                     // Track counters
                     if (tag == "ol")
                     {
-                        olCountPerLevel[ilvl] = olCountPerLevel.GetValueOrDefault(ilvl, 0) + 1;
-                        multiLevelCounters[ilvl] = multiLevelCounters.GetValueOrDefault(ilvl, 0) + 1;
+                        var seed = SeedStart(ilvl);
+                        olCountPerLevel[ilvl] = olCountPerLevel.GetValueOrDefault(ilvl, seed) + 1;
+                        multiLevelCounters[ilvl] = olCountPerLevel[ilvl];
                         // Reset deeper level counters
                         for (int lk = ilvl + 1; lk <= 8; lk++)
+                        {
+                            if (olCountPerLevel.ContainsKey(lk)) olCountPerLevel[lk] = 0;
                             if (multiLevelCounters.ContainsKey(lk)) multiLevelCounters[lk] = 0;
+                        }
                     }
 
                     currentListType = listStyle;
@@ -1089,14 +1084,28 @@ public partial class WordHandler
                     if (!string.IsNullOrEmpty(paraStyle))
                         sb.Append($" style=\"{paraStyle}\"");
                     sb.Append(">");
-                    // Multi-level numbering: prepend computed number (e.g., "1.1.1.")
-                    if (isMultiLevel && tag == "ol" && lvlText != null)
+                    // Computed marker for every ordered-list item (single or multi-level).
+                    if (tag == "ol")
                     {
-                        var numStr = lvlText;
-                        for (int lk = 0; lk <= ilvl; lk++)
-                            numStr = numStr.Replace($"%{lk + 1}", multiLevelCounters.GetValueOrDefault(lk, 0).ToString());
-                        var numWidth = hangingPt > 0 ? $"{hangingPt:0.#}pt" : "3em";
-                        sb.Append($"<span style=\"display:inline-block;min-width:{numWidth};padding-right:0.5em\">{numStr}</span>");
+                        var template = string.IsNullOrEmpty(lvlText) ? $"%{ilvl + 1}" : lvlText!;
+                        var marker = System.Text.RegularExpressions.Regex.Replace(template, @"%(\d)", m =>
+                        {
+                            var k = int.Parse(m.Groups[1].Value) - 1;
+                            var lvlFmt = GetNumberingFormat(numId, k);
+                            var counter = multiLevelCounters.GetValueOrDefault(k, 0);
+                            return OfficeCli.Core.WordNumFmtRenderer.Render(counter, lvlFmt);
+                        });
+                        var suff = GetLevelSuffix(numId, ilvl);
+                        var jc = GetLevelJustification(numId, ilvl);
+                        var markerWidth = hangingPt > 0 ? $"{hangingPt:0.#}pt" : "3em";
+                        var markerPadding = suff switch
+                        {
+                            "nothing" => "0",
+                            "space" => "0.25em",
+                            _ => "0.5em" // tab
+                        };
+                        var align = jc switch { "right" => "right", "center" => "center", _ => "left" };
+                        sb.Append($"<span style=\"display:inline-block;min-width:{markerWidth};padding-right:{markerPadding};text-align:{align}\">{HtmlEncode(marker)}</span>");
                     }
                     RenderParagraphContentHtml(sb, para);
                     pendingLiClose = true; // defer </li> in case next item nests
@@ -1149,11 +1158,13 @@ public partial class WordHandler
                         var lvlText = GetLevelText(hn.NumId, hn.Ilvl);
                         if (!string.IsNullOrEmpty(lvlText))
                         {
-                            var numStr = lvlText;
-                            for (int lk = 0; lk <= hn.Ilvl; lk++)
-                                numStr = numStr.Replace(
-                                    $"%{lk + 1}",
-                                    headingCounters.GetValueOrDefault(lk, 0).ToString());
+                            var numStr = System.Text.RegularExpressions.Regex.Replace(lvlText, @"%(\d)", m =>
+                            {
+                                var lk = int.Parse(m.Groups[1].Value) - 1;
+                                var lvlFmt = GetNumberingFormat(hn.NumId, lk);
+                                var counter = headingCounters.GetValueOrDefault(lk, 0);
+                                return OfficeCli.Core.WordNumFmtRenderer.Render(counter, lvlFmt);
+                            });
                             // Skip the auto-num span when the paragraph text
                             // already begins with the computed number, so a
                             // user-typed "1. Overview" does not render as

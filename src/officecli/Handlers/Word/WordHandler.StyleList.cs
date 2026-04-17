@@ -537,6 +537,38 @@ public partial class WordHandler
         return level?.LevelText?.Val?.Value;
     }
 
+    /// <summary>Get the LevelSuffix (tab/space/nothing) for a numbering level. Defaults to "tab".</summary>
+    private string GetLevelSuffix(int numId, int ilvl)
+    {
+        var level = GetLevel(numId, ilvl);
+        var suff = level?.LevelSuffix?.Val;
+        if (suff?.HasValue != true) return "tab";
+        return suff.InnerText ?? "tab";
+    }
+
+    /// <summary>Get the LevelJustification (left/center/right) for a numbering level. Defaults to "left".</summary>
+    private string GetLevelJustification(int numId, int ilvl)
+    {
+        var level = GetLevel(numId, ilvl);
+        var jc = level?.LevelJustification?.Val;
+        if (jc?.HasValue != true) return "left";
+        return jc.InnerText ?? "left";
+    }
+
+    private Level? GetLevel(int numId, int ilvl)
+    {
+        var numbering = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
+        if (numbering == null) return null;
+        var numInstance = numbering.Elements<NumberingInstance>()
+            .FirstOrDefault(n => n.NumberID?.Value == numId);
+        var abstractNumId = numInstance?.AbstractNumId?.Val?.Value;
+        if (abstractNumId == null) return null;
+        var abstractNum = numbering.Elements<AbstractNum>()
+            .FirstOrDefault(a => a.AbstractNumberId?.Value == abstractNumId);
+        return abstractNum?.Elements<Level>()
+            .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
+    }
+
     private int? GetStartValue(int numId, int ilvl)
     {
         var numbering = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
