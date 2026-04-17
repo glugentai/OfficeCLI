@@ -1735,7 +1735,10 @@ public partial class WordHandler
         if (isWestern)
         {
             // Prefer theme-resolved CJK font (from supplemental font list)
-            var prefix = !string.IsNullOrEmpty(themeCjkFont) ? $", '{themeCjkFont}'" : "";
+            // CssSanitize the theme font name — theme1.xml is attacker-
+            // controlled and this value interpolates into font-family.
+            var safeTheme = !string.IsNullOrEmpty(themeCjkFont) ? CssSanitize(themeCjkFont) : "";
+            var prefix = !string.IsNullOrEmpty(safeTheme) ? $", '{safeTheme}'" : "";
             var lang = eastAsiaLang?.ToLowerInvariant() ?? "";
             if (lang.StartsWith("ja"))
                 return prefix + ", 'Hiragino Mincho ProN', 'Yu Mincho', 'MS Mincho'";

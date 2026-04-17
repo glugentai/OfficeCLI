@@ -171,7 +171,11 @@ public partial class ExcelHandler
             {
                 var rgb = tabColorEl.Rgb.Value;
                 if (rgb.Length > 6) rgb = rgb[^6..];
-                tabColorStyle = $" style=\"--tab-color:#{rgb}\"";
+                // Hex-gate before inline style interpolation — unchecked
+                // raw value would break out of the style attribute.
+                if (rgb.Length == 6
+                    && rgb.All(c => (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')))
+                    tabColorStyle = $" style=\"--tab-color:#{rgb}\"";
             }
             sb.AppendLine($"  <div class=\"sheet-tab{activeClass}\"{tabColorStyle} data-sheet=\"{i}\" role=\"tab\" tabindex=\"0\" onclick=\"switchSheet({i})\" onkeydown=\"if(event.key==='Enter'||event.key===' ')switchSheet({i})\">{HtmlEncode(sheets[i].Name)}</div>");
         }
@@ -1857,7 +1861,7 @@ public partial class ExcelHandler
         if (stylesheet?.Fonts != null && stylesheet.Fonts.Elements<Font>().Any())
         {
             var f0 = stylesheet.Fonts.Elements<Font>().First();
-            if (f0.FontName?.Val?.Value != null) defFontName = f0.FontName.Val.Value;
+            if (f0.FontName?.Val?.Value != null) defFontName = CssSanitize(f0.FontName.Val.Value);
             if (f0.FontSize?.Val?.Value != null) defFontSize = f0.FontSize.Val.Value.ToString("0.##");
         }
         return $$"""
