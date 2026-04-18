@@ -1064,7 +1064,21 @@ public partial class ExcelHandler
             : null;
         string type;
         if (cell.DataType?.HasValue != true)
-            type = "Number";
+        {
+            // R12-F2: a formula whose cached value is a non-numeric string
+            // should report type=String, not the Number default. Excel itself
+            // writes t="str" on such cells; external tools or our own writer
+            // occasionally leave the attribute off, so infer from the cached
+            // value content.
+            var raw = cell.CellValue?.Text;
+            if (formula != null
+                && !string.IsNullOrEmpty(raw)
+                && !double.TryParse(raw, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out _))
+                type = "String";
+            else
+                type = "Number";
+        }
         else if (cell.DataType.Value == CellValues.String)
             type = "String";
         else if (cell.DataType.Value == CellValues.SharedString)
