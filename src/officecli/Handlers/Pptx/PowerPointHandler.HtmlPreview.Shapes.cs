@@ -829,28 +829,79 @@ public partial class PowerPointHandler
             var arrowSize = Math.Max(3, lineWidth * 3);
             var defs = new StringBuilder();
             defs.Append("<defs>");
+            // Both markers use a right-pointing triangle with tip at (arrowSize, arrowSize/2).
+            // For marker-start we use orient="auto-start-reverse" so SVG flips the right-pointing
+            // triangle to point outward (leftward) at the line's start. Authoring both markers
+            // with the same geometry avoids a past bug where the head marker was authored
+            // leftward-pointing and the reverse flipped it inward on straight connectors.
             if (hasHead)
             {
-                defs.Append($"<marker id=\"ah\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"{arrowSize:0.#}\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto-start-reverse\"><polygon points=\"{arrowSize:0.#} 0,0 {arrowSize / 2:0.#},{arrowSize:0.#} {arrowSize:0.#}\" fill=\"{safeColor}\"/></marker>");
+                defs.Append($"<marker id=\"ah\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"{arrowSize:0.#}\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto-start-reverse\"><polygon points=\"0 0,{arrowSize:0.#} {arrowSize / 2:0.#},0 {arrowSize:0.#}\" fill=\"{safeColor}\"/></marker>");
                 markerStartAttr = " marker-start=\"url(#ah)\"";
             }
             if (hasTail)
             {
-                defs.Append($"<marker id=\"at\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"0\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto\"><polygon points=\"0 0,{arrowSize:0.#} {arrowSize / 2:0.#},0 {arrowSize:0.#}\" fill=\"{safeColor}\"/></marker>");
+                defs.Append($"<marker id=\"at\" markerWidth=\"{arrowSize:0.#}\" markerHeight=\"{arrowSize:0.#}\" refX=\"{arrowSize:0.#}\" refY=\"{arrowSize / 2:0.#}\" orient=\"auto\"><polygon points=\"0 0,{arrowSize:0.#} {arrowSize / 2:0.#},0 {arrowSize:0.#}\" fill=\"{safeColor}\"/></marker>");
                 markerEndAttr = " marker-end=\"url(#at)\"";
             }
             defs.Append("</defs>");
             markerDefs = defs.ToString();
         }
 
+        // Branch on preset geometry: straightConnectorN -> line; bentConnectorN -> polyline;
+        // curvedConnectorN -> cubic bezier path. Falls back to straight line for unknown presets.
+        var prstGeom = cxn.ShapeProperties?.GetFirstChild<Drawing.PresetGeometry>();
+        var preset = prstGeom?.Preset?.HasValue == true ? prstGeom.Preset.InnerText : "straightConnector1";
+
+        // CONSISTENCY(shape-stroke-unit): stroke-width in pt matches CSS border path (see R3 fix).
+        var strokeAttrs = $"stroke=\"{safeColor}\" stroke-width=\"{lineWidth:0.##}pt\" fill=\"none\"{dashAttr}{markerStartAttr}{markerEndAttr}";
+
         var dataPathAttr = string.IsNullOrEmpty(dataPath) ? "" : $" data-path=\"{HtmlEncode(dataPath)}\"";
         sb.AppendLine($"    <div class=\"connector\"{dataPathAttr} style=\"left:{Units.EmuToPt(renderX)}pt;top:{Units.EmuToPt(renderY)}pt;width:{widthPt}pt;height:{heightPt}pt\">");
-        sb.AppendLine($"      <svg width=\"100%\" height=\"100%\" preserveAspectRatio=\"none\" style=\"overflow:visible\">");
-        if (!string.IsNullOrEmpty(markerDefs))
-            sb.AppendLine($"        {markerDefs}");
-        // CONSISTENCY(shape-stroke-unit): stroke-width in pt matches CSS border path (see R3 fix).
-        sb.AppendLine($"        <line x1=\"{svgX1}\" y1=\"{svgY1}\" x2=\"{svgX2}\" y2=\"{svgY2}\" stroke=\"{safeColor}\" stroke-width=\"{lineWidth:0.##}pt\"{dashAttr}{markerStartAttr}{markerEndAttr}/>");
-        sb.AppendLine("      </svg>");
+
+        if (preset.StartsWith("bentConnector", StringComparison.Ordinal))
+        {
+            // Bent connectors: right-angle polyline. Use viewBox=0..100 so stretched
+            // preserveAspectRatio=none fills the container.
+            // bentConnector2: single 90-degree bend (2 segments, 3 points).
+            // bentConnector3 (default): 3 segments with mid bend — (0,0) -> (50,0) -> (50,100) -> (100,100).
+            // bentConnector4/5: approximate with 25/75 splits when no adjustments set.
+            string points = preset switch
+            {
+                "bentConnector2" => "0,0 100,0 100,100",
+                "bentConnector4" or "bentConnector5" => "0,0 25,0 25,50 75,50 75,100 100,100",
+                _ => "0,0 50,0 50,100 100,100", // bentConnector3
+            };
+            sb.AppendLine("      <svg width=\"100%\" height=\"100%\" viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" style=\"overflow:visible\">");
+            if (!string.IsNullOrEmpty(markerDefs))
+                sb.AppendLine($"        {markerDefs}");
+            sb.AppendLine($"        <polyline points=\"{points}\" {strokeAttrs}/>");
+            sb.AppendLine("      </svg>");
+        }
+        else if (preset.StartsWith("curvedConnector", StringComparison.Ordinal))
+        {
+            // Curved connectors: cubic bezier S-curve. Author in 0..100 viewBox.
+            // curvedConnector3 default: M 0,0 C 50,0 50,100 100,100 (horizontal-entry S).
+            string d = preset switch
+            {
+                "curvedConnector2" => "M 0,0 Q 100,0 100,100",
+                "curvedConnector4" or "curvedConnector5" => "M 0,0 C 25,0 25,50 50,50 C 75,50 75,100 100,100",
+                _ => "M 0,0 C 50,0 50,100 100,100", // curvedConnector3
+            };
+            sb.AppendLine("      <svg width=\"100%\" height=\"100%\" viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" style=\"overflow:visible\">");
+            if (!string.IsNullOrEmpty(markerDefs))
+                sb.AppendLine($"        {markerDefs}");
+            sb.AppendLine($"        <path d=\"{d}\" {strokeAttrs}/>");
+            sb.AppendLine("      </svg>");
+        }
+        else
+        {
+            sb.AppendLine("      <svg width=\"100%\" height=\"100%\" preserveAspectRatio=\"none\" style=\"overflow:visible\">");
+            if (!string.IsNullOrEmpty(markerDefs))
+                sb.AppendLine($"        {markerDefs}");
+            sb.AppendLine($"        <line x1=\"{svgX1}\" y1=\"{svgY1}\" x2=\"{svgX2}\" y2=\"{svgY2}\" {strokeAttrs}/>");
+            sb.AppendLine("      </svg>");
+        }
         sb.AppendLine("    </div>");
     }
 
