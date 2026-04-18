@@ -1246,4 +1246,185 @@ internal static partial class PivotTableHelper
         pf.AppendChild(items);
     }
 
+    // ==================== Calculated Fields ====================
+    //
+    // PV7: user-declared calculated fields are parsed from properties as
+    //   calculatedField="Name:=Formula"
+    //   calculatedField1="Name1:=Formula1"
+    //   calculatedField2="Name2:=Formula2"
+    //
+    // Each one becomes:
+    //   - a <x:cacheField name="Name" formula="..." databaseField="0"/>
+    //     on the pivotCacheDefinition (formula stored WITHOUT leading '=')
+    //   - a <x:pivotField dataField="1"/> on the pivotTableDefinition
+    //   - a <x:dataField name="Name" fld="<new cacheFieldIdx>"/>
+    //   - a <x:calculatedFields> marker block on the pivotTableDefinition
+    //     (ECMA-376 §18.10.1.13; OpenXml SDK does not model it, so we emit
+    //     it as an unknown element).
+    //
+    // No records are written for calculated fields (databaseField="0"),
+    // matching the date-group-derived pattern — Excel computes the column
+    // live from the formula when the workbook opens.
+    internal static void ApplyCalculatedFields(
+        PivotCacheDefinition cacheDef,
+        PivotTableDefinition pivotDef,
+        Dictionary<string, string> properties)
+    {
+        var specs = ParseCalculatedFieldSpecs(properties);
+        if (specs.Count == 0) return;
+
+        var cacheFields = cacheDef.GetFirstChild<CacheFields>()
+            ?? throw new InvalidOperationException("pivotCacheDefinition is missing <cacheFields>");
+        var pivotFields = pivotDef.PivotFields
+            ?? throw new InvalidOperationException("pivotTableDefinition is missing <pivotFields>");
+
+        // Collect existing names (in both cacheFields and calculated specs)
+        // so we can reject duplicates cleanly.
+        var existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var cf in cacheFields.Elements<CacheField>())
+            if (!string.IsNullOrEmpty(cf.Name?.Value))
+                existingNames.Add(cf.Name!.Value!);
+
+        // Ensure <dataFields> exists so we can append to it.
+        var dataFields = pivotDef.DataFields;
+        if (dataFields == null)
+        {
+            dataFields = new DataFields { Count = 0u };
+            pivotDef.DataFields = dataFields;
+        }
+
+        // Accumulate a single <x:calculatedFields> block — OOXML requires one
+        // container, not one per field.
+        const string xNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        var calcFieldsEl = new OpenXmlUnknownElement("x", "calculatedFields", xNs);
+
+        foreach (var (name, formula) in specs)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                throw new ArgumentException("calculatedField requires a non-empty name");
+            if (string.IsNullOrWhiteSpace(formula))
+                throw new ArgumentException($"calculatedField '{name}' requires a non-empty formula");
+            if (existingNames.Contains(name))
+                throw new ArgumentException(
+                    $"calculatedField '{name}' collides with an existing field name");
+            existingNames.Add(name);
+
+            // 1. cacheField
+            var cleanFormula = formula.TrimStart('=').Trim();
+            var cacheField = new CacheField
+            {
+                Name = name,
+                Formula = cleanFormula,
+                DatabaseField = false,
+                NumberFormatId = 0u
+            };
+            cacheFields.AppendChild(cacheField);
+
+            // New field index = position of the freshly-appended cacheField.
+            var newFieldIdx = (uint)(cacheFields.Elements<CacheField>().Count() - 1);
+            cacheFields.Count = (uint)cacheFields.Elements<CacheField>().Count();
+
+            // 2. pivotField — empty, DataField=true.
+            var pf = new PivotField
+            {
+                DataField = true,
+                ShowAll = false
+            };
+            pivotFields.AppendChild(pf);
+            pivotFields.Count = (uint)pivotFields.Elements<PivotField>().Count();
+
+            // 3. dataField
+            var df = new DataField
+            {
+                Name = name,
+                Field = newFieldIdx,
+                BaseField = 0,
+                BaseItem = 0u
+            };
+            dataFields.AppendChild(df);
+            dataFields.Count = (uint)dataFields.Elements<DataField>().Count();
+
+            // 4. calculatedFields entry
+            var calcField = new OpenXmlUnknownElement("x", "calculatedField", xNs);
+            calcField.SetAttribute(new OpenXmlAttribute("name", "", name));
+            calcField.SetAttribute(new OpenXmlAttribute("formula", "", cleanFormula));
+            calcFieldsEl.AppendChild(calcField);
+        }
+
+        // Place <x:calculatedFields> after <x:dataFields> (ECMA-376 schema
+        // order: ...dataFields, formats, conditionalFormats, chartFormats,
+        // pivotHierarchies, pivotTableStyleInfo, filters, rowHierarchiesUsage,
+        // colHierarchiesUsage, extLst). We insert before pivotTableStyle info
+        // if present so the element lands in a schema-legal slot.
+        var insertBefore = (OpenXmlElement?)pivotDef.GetFirstChild<PivotTableStyle>();
+        if (insertBefore != null)
+            pivotDef.InsertBefore(calcFieldsEl, insertBefore);
+        else
+            pivotDef.AppendChild(calcFieldsEl);
+    }
+
+    /// <summary>
+    /// Parse all calculatedField props from the property bag. Accepts:
+    ///   calculatedField=Name:=Formula
+    ///   calculatedField=Name:Formula     (leading '=' optional)
+    ///   calculatedField1=..., calculatedField2=...
+    ///   calculatedFields=[{"name":"X","formula":"..."}, ...]  (JSON)
+    /// </summary>
+    private static List<(string name, string formula)> ParseCalculatedFieldSpecs(
+        Dictionary<string, string> properties)
+    {
+        var result = new List<(string, string)>();
+
+        // JSON form first — higher fidelity when user wants multiple specs.
+        if (properties.TryGetValue("calculatedFields", out var jsonRaw)
+            && !string.IsNullOrWhiteSpace(jsonRaw))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(jsonRaw);
+                if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    throw new ArgumentException("'calculatedFields' must be a JSON array");
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    if (el.ValueKind != System.Text.Json.JsonValueKind.Object)
+                        throw new ArgumentException("each calculatedFields entry must be a JSON object");
+                    string? name = null, formula = null;
+                    foreach (var p in el.EnumerateObject())
+                    {
+                        if (p.NameEquals("name")) name = p.Value.GetString();
+                        else if (p.NameEquals("formula")) formula = p.Value.GetString();
+                    }
+                    if (name != null && formula != null)
+                        result.Add((name, formula));
+                }
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                throw new ArgumentException($"invalid JSON for calculatedFields: {ex.Message}");
+            }
+        }
+
+        // Numbered + bare calculatedField props (ordinal sort so calculatedField1
+        // appears before calculatedField2 regardless of insertion order).
+        var cfKeys = properties.Keys
+            .Where(k => System.Text.RegularExpressions.Regex.IsMatch(
+                k, @"^calculatedField\d*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        foreach (var key in cfKeys)
+        {
+            var raw = properties[key];
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var colonIdx = raw.IndexOf(':');
+            if (colonIdx < 0)
+                throw new ArgumentException(
+                    $"calculatedField '{raw}' must be 'Name:=Formula' (colon-separated)");
+            var name = raw[..colonIdx].Trim();
+            var formula = raw[(colonIdx + 1)..].Trim();
+            result.Add((name, formula));
+        }
+
+        return result;
+    }
+
 }

@@ -1154,8 +1154,18 @@ internal static partial class PivotTableHelper
                     pf.ShowDropDowns = false;
             }
         }
+        // PV7: calculatedField — parses `calculatedField="Name:=Formula"` (or
+        // numbered variants `calculatedField1=...`, `calculatedField2=...`)
+        // and appends the matching cacheField / pivotField / dataField trio
+        // plus an <x:calculatedFields> marker on the pivotTableDefinition.
+        // The underlying column is NOT rendered into sheetData; Excel
+        // computes calculated fields live at display time from the formula
+        // stored on the cacheField.
+        ApplyCalculatedFields(cachePart.PivotCacheDefinition, pivotDef, properties);
+
         pivotPart.PivotTableDefinition = pivotDef;
         pivotPart.PivotTableDefinition.Save();
+        cachePart.PivotCacheDefinition.Save();
 
         // 6. RENDER the pivot output into the target sheet's <sheetData>.
         //
